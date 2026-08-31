@@ -1,0 +1,14 @@
+numpy>=1.26,<3
+scipy>=1.11,<2
+sounddevice>=0.5,<0.6
+pysilero-vad>=3.0,<4
+onnxruntime>=1.17,<2
+ai-edge-litert>=2.0.2,<3
+openwakeword @ git+https://github.com/dscripka/openWakeWord.git@368c03716d1e92591906a84949bc477f3a834455
+faster-whisper>=1.1,<2
+elevenlabs>=2.65,<3
+anthropic>=1.0,<2
+httpx>=0.27,<1
+python-dotenv>=1.0,<2
+opencv-python>=4.10
+pytest>=8.0,<9

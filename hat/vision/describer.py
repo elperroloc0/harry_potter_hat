@@ -9,12 +9,19 @@ from hat.config import settings
 
 logger = logging.getLogger(__name__)
 
+NO_PERSON_SENTINEL = "NONE"
+
 DESCRIBE_PROMPT = (
-    "Describe the person in this photo in 2-3 short factual sentences in English: "
-    "apparent age group, hair, glasses if any, clothing and its colors, and one "
-    "notable accessory if present. Mention only what is clearly visible. Do not "
-    "guess identity, do not evaluate attractiveness, do not mention the photo or "
-    "camera."
+    "Look at this photo. If, and only if, a person is clearly visible in it, "
+    "describe them in 2-3 short factual sentences in English: apparent age "
+    "group, hair, glasses if any, clothing and its colors, and one notable "
+    "accessory if present. Mention only what is clearly visible. Do not guess "
+    "identity, do not evaluate attractiveness, do not mention the photo or "
+    "camera. If no person is clearly visible -- for example an empty room, a "
+    "floor, a wall, furniture, or anything else with nobody in frame -- reply "
+    f"with exactly the single word {NO_PERSON_SENTINEL} and nothing else. Do "
+    "not guess or invent a description of a person who might be just out of "
+    "frame; only describe someone you can actually see."
 )
 
 
@@ -77,6 +84,13 @@ class OllamaDescriber:
                     "reasoning pass before writing an answer; degrading to None",
                     body.get("done_reason"),
                 )
+                return None
+            # Bare-word check, not a substring check: a real description could
+            # legitimately contain "none" (e.g. "no glasses"), so only treat
+            # this as the sentinel when the whole reply -- once trimmed of
+            # trailing punctuation -- is just that one word.
+            if content.rstrip(".!").strip().upper() == NO_PERSON_SENTINEL:
+                logger.info("OllamaDescriber.describe: no person visible in frame")
                 return None
             return content
         except Exception:

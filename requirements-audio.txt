@@ -1,0 +1,18 @@
+# Wake word / VAD / STT stack for the real hat.audio.listener.VoiceInput.
+# Install in addition to requirements.txt, only once you're specifically
+# working on voice input -- not needed for anything else in this project,
+# and hat.main already degrades gracefully to FakeVoiceInput if this stack
+# isn't installed or fails to import (see build_voice_input() in hat/main.py).
+#
+# Known-shaky on Raspberry Pi (ARM64) as of this writing, unverified:
+# - ai-edge-litert: aarch64 Linux wheel availability unconfirmed.
+# - openwakeword pulls in speexdsp-ns, which has no aarch64 Linux wheel on
+#   PyPI at all -- installing this file on the Pi currently fails outright.
+#   If/when you tackle wake word on the Pi, you'll likely need to either
+#   patch/vendor around that dependency, build speexdsp-ns from source
+#   (needs libspeexdsp-dev), or find an alternative wake-word backend.
+pysilero-vad>=3.0,<4
+onnxruntime>=1.17,<2
+ai-edge-litert>=2.0.2,<3
+openwakeword @ git+https://github.com/dscripka/openWakeWord.git@368c03716d1e92591906a84949bc477f3a834455
+faster-whisper>=1.1,<2

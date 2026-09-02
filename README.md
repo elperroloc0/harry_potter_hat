@@ -15,6 +15,7 @@ a Mac first, with every hardware dependency behind an interface (`Camera`,
 python3 -m venv .pottervenv
 source .pottervenv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-audio.txt   # only if working on wake word/STT -- see that file
 cp .env.example .env   # fill in ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
 

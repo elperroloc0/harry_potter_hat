@@ -13,15 +13,17 @@ NO_PERSON_SENTINEL = "NONE"
 
 DESCRIBE_PROMPT = (
     "Look at this photo. If, and only if, a person is clearly visible in it, "
-    "describe them in 2-3 short factual sentences in English: apparent age "
-    "group, hair, glasses if any, clothing and its colors, and one notable "
-    "accessory if present. Mention only what is clearly visible. Do not guess "
-    "identity, do not evaluate attractiveness, do not mention the photo or "
-    "camera. If no person is clearly visible -- for example an empty room, a "
-    "floor, a wall, furniture, or anything else with nobody in frame -- reply "
-    f"with exactly the single word {NO_PERSON_SENTINEL} and nothing else. Do "
-    "not guess or invent a description of a person who might be just out of "
-    "frame; only describe someone you can actually see."
+    "describe ONLY that person in 2-3 short factual sentences in English: "
+    "apparent age group, hair, glasses if any, clothing and its colors, and "
+    "one notable accessory if present. Describe only the person -- do not "
+    "mention any objects, equipment, furniture, or background details, even "
+    "if visible. Mention only what is clearly visible on the person. Do not "
+    "guess identity, do not evaluate attractiveness, do not mention the "
+    "photo or camera. If no person is clearly visible -- for example an "
+    "empty room, a floor, a wall, furniture, or anything else with nobody "
+    f"in frame -- reply with exactly the single word {NO_PERSON_SENTINEL} "
+    "and nothing else. Do not guess or invent a description of a person who "
+    "might be just out of frame; only describe someone you can actually see."
 )
 
 
@@ -57,20 +59,20 @@ class OllamaDescriber:
                     ],
                     "stream": False,
                     "keep_alive": "30m",
-                    # qwen3-vl:8b is a "thinking" model: it spends part of
-                    # this budget on a hidden reasoning pass (message.thinking)
-                    # before it ever writes message.content. Confirmed live
-                    # that Ollama's think:false does not suppress that pass
-                    # here. How much it needs varies per photo, not a fixed
-                    # cost: measured live on the Pi against real photos of a
-                    # real person, one finished cleanly at 424 total tokens
-                    # (26.9s), another exceeded 500 and got cut off with
-                    # empty content (done_reason "length") before writing any
-                    # answer. 1000 leaves real headroom above both; a
-                    # sufficiently complex photo can still exhaust it, in
-                    # which case describe() degrades to None same as any
-                    # other failure (see the empty-content check below).
-                    "options": {"temperature": 0.2, "num_predict": 1000},
+                    # Default model (qwen2.5vl:7b) does not "think" -- no
+                    # hidden reasoning pass, so num_predict only needs to
+                    # cover the actual 2-3 sentence reply. Measured live
+                    # against a real, deliberately hard photo (dim light,
+                    # out of focus, awkward angle): 1.7-2.1s, 40-60 tokens.
+                    # 300 leaves comfortable headroom. If VISION_MODEL is
+                    # overridden to a thinking model (e.g. qwen3-vl, which
+                    # was the original default -- see project memory for why
+                    # it was dropped: 3-6x slower and no reliable way found
+                    # to suppress its reasoning pass), this budget is too
+                    # small and describe() will silently degrade to None via
+                    # the empty-content check below -- raise this back up if
+                    # you switch models.
+                    "options": {"temperature": 0.2, "num_predict": 300},
                 },
                 timeout=self.timeout_s,
             )

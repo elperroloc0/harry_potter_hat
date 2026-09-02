@@ -79,26 +79,21 @@ def load_settings() -> Settings:
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
         ollama_url=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"),
-        vision_model=os.environ.get("VISION_MODEL", "qwen3-vl:8b"),
+        vision_model=os.environ.get("VISION_MODEL", "qwen2.5vl:7b"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-5"),
         languages=languages or ("es", "en"),
         default_lang=os.environ.get("DEFAULT_LANG", "es"),
         profile=os.environ.get("PROFILE", "mac"),  # type: ignore[arg-type]
         camera_index=int(os.environ.get("CAMERA_INDEX", "0")),
-        # qwen3-vl:8b is a "thinking" model: Ollama's think:false does not
-        # actually suppress its reasoning pass on this setup, and the
-        # reasoning tokens come out of the same budget as the final answer,
-        # so a tight timeout can cut it off before it ever writes a reply
-        # (see DESCRIBE_PROMPT's num_predict in hat/vision/describer.py).
-        # Measured live on the Pi against real photos of a real person:
-        # ~17 tokens/s generation, one photo finished at 424 tokens (26.9s),
-        # another needed more than 500 and got cut off. At num_predict=1000
-        # a full-budget run is ~60s worst case; 75s leaves margin on top of
-        # that. This is a real, currently-unresolved UX problem (the
-        # project's own goal was <=5-10s) -- the actual fix is likely a
-        # non-thinking vision model, not a bigger timeout; see
-        # project_hat_hardware_status memory.
-        vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "75.0")),
+        # qwen2.5vl:7b (default since 2026-09-02) has no hidden reasoning
+        # pass, unlike qwen3-vl:8b which this replaced -- measured live
+        # against a real, deliberately hard photo (dim light, out of focus,
+        # awkward angle) at 1.7-2.1s. 20s leaves real margin for a slower
+        # network/cold-start case without reintroducing the multi-minute
+        # worst case a thinking model risked. If VISION_MODEL is overridden
+        # back to a thinking model, raise this back toward 75s -- see
+        # project_hat_hardware_status memory for the full comparison.
+        vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "20.0")),
         listen_timeout_s=float(os.environ.get("LISTEN_TIMEOUT_S", "8.0")),
         session_max_s=float(os.environ.get("SESSION_MAX_S", "300.0")),
         max_reply_tokens=int(os.environ.get("MAX_REPLY_TOKENS", "500")),

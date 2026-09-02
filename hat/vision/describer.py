@@ -60,17 +60,17 @@ class OllamaDescriber:
                     # qwen3-vl:8b is a "thinking" model: it spends part of
                     # this budget on a hidden reasoning pass (message.thinking)
                     # before it ever writes message.content. Confirmed live
-                    # against this project's actual Ollama instance that
-                    # Ollama's think:false does not suppress that pass here,
-                    # and 120 was too small a budget -- the model would burn
-                    # it all on thinking and return empty content every time
-                    # (done_reason "length", content ""). 500 leaves real
-                    # headroom above the ~150-250 tokens a normal reply used
-                    # in testing; a visually busy/ambiguous photo can still
-                    # exhaust it, in which case describe() degrades to None
-                    # same as any other failure (see the empty-content check
-                    # below).
-                    "options": {"temperature": 0.2, "num_predict": 500},
+                    # that Ollama's think:false does not suppress that pass
+                    # here. How much it needs varies per photo, not a fixed
+                    # cost: measured live on the Pi against real photos of a
+                    # real person, one finished cleanly at 424 total tokens
+                    # (26.9s), another exceeded 500 and got cut off with
+                    # empty content (done_reason "length") before writing any
+                    # answer. 1000 leaves real headroom above both; a
+                    # sufficiently complex photo can still exhaust it, in
+                    # which case describe() degrades to None same as any
+                    # other failure (see the empty-content check below).
+                    "options": {"temperature": 0.2, "num_predict": 1000},
                 },
                 timeout=self.timeout_s,
             )

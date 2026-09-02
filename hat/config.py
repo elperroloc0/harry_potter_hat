@@ -90,9 +90,15 @@ def load_settings() -> Settings:
         # reasoning tokens come out of the same budget as the final answer,
         # so a tight timeout can cut it off before it ever writes a reply
         # (see DESCRIBE_PROMPT's num_predict in hat/vision/describer.py).
-        # 10s was measured too tight even for a trivial image; 20s leaves
-        # real headroom.
-        vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "20.0")),
+        # Measured live on the Pi against real photos of a real person:
+        # ~17 tokens/s generation, one photo finished at 424 tokens (26.9s),
+        # another needed more than 500 and got cut off. At num_predict=1000
+        # a full-budget run is ~60s worst case; 75s leaves margin on top of
+        # that. This is a real, currently-unresolved UX problem (the
+        # project's own goal was <=5-10s) -- the actual fix is likely a
+        # non-thinking vision model, not a bigger timeout; see
+        # project_hat_hardware_status memory.
+        vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "75.0")),
         listen_timeout_s=float(os.environ.get("LISTEN_TIMEOUT_S", "8.0")),
         session_max_s=float(os.environ.get("SESSION_MAX_S", "300.0")),
         max_reply_tokens=int(os.environ.get("MAX_REPLY_TOKENS", "500")),

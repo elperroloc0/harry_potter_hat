@@ -17,7 +17,7 @@ import time
 
 from hat.audio.stub import FakeVoiceInput
 from hat.brain.client import HatBrain
-from hat.brain.persona import PARTING, STILL_THERE
+from hat.brain.persona import LOOKING_LINE, PARTING, SIT_LINE, STILL_THERE
 from hat.config import settings
 from hat.vision.camera import make_camera
 from hat.vision.describer import OllamaDescriber
@@ -94,9 +94,22 @@ def build_voice_input(args):
         return FakeVoiceInput()
 
 
+def wait_for_sort_trigger() -> None:
+    """Placeholder for a future 'hat placed on the visitor's head' sensor
+    (e.g. a tilt switch) -- a physically distinct moment from the wake
+    word/approach that starts the look-at-you step. Until that hardware
+    exists, both real-voice and --text runs share the same manual stand-in:
+    press Enter when the hat is ready to begin sorting."""
+    input("[press Enter: hat placed on head -- begin sorting] ")
+
+
 def run_conversation(brain: HatBrain, voice_input, voice) -> None:
-    """One conversation, from just after the greeting until the visitor
-    leaves (goodbye, silence, or the session time cap)."""
+    """Open-ended chat: listen/reply until goodbye, silence, or the session
+    time cap. Fully working and tested, but not called by run() by
+    default -- the automatic sorting flow ends the visit on its own right
+    after the house is proclaimed. Wire this back in (e.g. only when the
+    visitor says something on their own after sorting) if/when an
+    open-ended follow-up chat becomes the desired default again."""
     started = time.monotonic()
     last_lang = settings.default_lang
     misses = 0
@@ -142,23 +155,38 @@ def run(args) -> None:
     voice_input = build_voice_input(args)
     voice = build_voice()
 
+    lang = settings.default_lang
+
     try:
         while True:
             voice_input.wait_for_wake()
 
             try:
-                voice.play_effect("wake_ack")
-
-                appearance = None
-                if cam:
-                    jpeg = cam.capture_jpeg()
-                    appearance = describer.describe(jpeg) if jpeg else None
-
-                greeting = brain.start_session(appearance, settings.default_lang)
+                # Everything from wake to the house proclamation is a single
+                # non-interactive performance: mic stays muted throughout
+                # (one hold() covers it, spanning both triggers below) so
+                # nothing said here is mistaken for the visitor answering.
+                # The visit ends automatically once the house is spoken --
+                # no open-ended listening loop by default (see
+                # run_conversation()'s docstring).
                 with voice_input.hold():
-                    voice.speak(greeting, settings.default_lang)
+                    # Trigger A (wake word / approach): look at the visitor.
+                    voice.play_effect("wake_ack")
+                    voice.speak(LOOKING_LINE[lang], lang)
 
-                run_conversation(brain, voice_input, voice)
+                    appearance = None
+                    if cam:
+                        jpeg = cam.capture_jpeg()
+                        appearance = describer.describe(jpeg) if jpeg else None
+
+                    # Trigger B (hat placed on head): begin sorting. A
+                    # separate event from trigger A on purpose -- see
+                    # wait_for_sort_trigger()'s docstring.
+                    wait_for_sort_trigger()
+
+                    voice.speak(SIT_LINE[lang], lang)
+                    for beat in brain.start_sorting(appearance, lang):
+                        voice.speak(beat, lang)
             except Exception:
                 # A hiccup in one visit (TTS glitch, camera dropout, etc.)
                 # should not take the whole prop down for the next visitor.

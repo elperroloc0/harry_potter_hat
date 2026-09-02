@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import tempfile
 from typing import Protocol, runtime_checkable
 
 import cv2
@@ -34,7 +37,7 @@ def _downscale_if_needed(frame, max_dimension: int = MAX_DIMENSION):
 
 class OpenCVWebcam:
     """Live webcam capture via OpenCV, macOS (AVFoundation) backend. This is
-    the dev-machine camera; the Pi target uses Picamera2Camera instead."""
+    the dev-machine camera; the Pi target uses RpicamJpegCamera instead."""
 
     def __init__(
         self,
@@ -117,22 +120,68 @@ class StaticImageStub:
         pass
 
 
-class Picamera2Camera:
-    """Raspberry Pi CSI camera via picamera2. Not testable on the Mac — the
-    picamera2 library only installs on Pi OS. Lazy-imported so importing
-    this module never fails on the dev machine."""
+class RpicamJpegCamera:
+    """Raspberry Pi CSI camera (Arducam OV5647) via the rpicam-apps CLI --
+    `rpicam-jpeg`, the Bookworm+ rename of libcamera-jpeg. Shells out rather
+    than using the picamera2 library: picamera2 has no PyPI wheel (apt-only,
+    needs --system-site-packages or the system Python), while rpicam-jpeg is
+    a plain CLI already on the OS image and is what was actually bench-
+    tested (`rpicam-jpeg -o snapshot.jpg --width 800 --height 600
+    --nopreview`).
+    """
 
-    def __init__(self, index: int = 0, width: int = 1280, height: int = 720) -> None:
-        import picamera2  # noqa: F401  (Pi-only; lazy import keeps this module Mac-safe)
-
-        raise NotImplementedError(
-            "Picamera2Camera: build and test on the Pi once hardware arrives"
-        )
+    def __init__(
+        self,
+        width: int = 800,
+        height: int = 600,
+        timeout_s: float = 15.0,
+    ) -> None:
+        # 800x600 (down from the sensor's native 2592x1944) is the
+        # bench-chosen resolution -- plenty for "describe the person",
+        # and faster to shoot/transfer/decode than full res.
+        self.width = width
+        self.height = height
+        self.timeout_s = timeout_s
 
     def capture_jpeg(self) -> bytes | None:
-        raise NotImplementedError(
-            "Picamera2Camera: build and test on the Pi once hardware arrives"
-        )
+        fd, path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            result = subprocess.run(
+                [
+                    "rpicam-jpeg",
+                    "-o", path,
+                    "--width", str(self.width),
+                    "--height", str(self.height),
+                    "--nopreview",
+                ],
+                capture_output=True,
+                timeout=self.timeout_s,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "rpicam-jpeg exited %s: %s",
+                    result.returncode,
+                    result.stderr.decode(errors="replace").strip(),
+                )
+                return None
+            with open(path, "rb") as f:
+                data = f.read()
+            return data or None
+        except FileNotFoundError:
+            logger.warning("rpicam-jpeg not found on PATH -- is rpicam-apps installed?")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.warning("rpicam-jpeg timed out after %.1fs", self.timeout_s)
+            return None
+        except Exception:
+            logger.exception("rpicam-jpeg capture failed")
+            return None
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     def close(self) -> None:
         pass
@@ -144,22 +193,33 @@ def make_camera(settings, image_path: str | None = None) -> Camera:
     if settings.profile == "mac":
         return OpenCVWebcam(settings.camera_index)
     if settings.profile == "pi":
-        return Picamera2Camera()
+        return RpicamJpegCamera()
     raise ValueError(f"Unknown profile: {settings.profile!r}")
 
 
 if __name__ == "__main__":
+    from hat.config import settings
+
     logging.basicConfig(level=logging.INFO)
-    cam = OpenCVWebcam(0)
+    cam = make_camera(settings)
+    print(f"profile={settings.profile!r} -> using {type(cam).__name__}")
     jpeg = cam.capture_jpeg()
     if jpeg is None:
-        print(
-            "capture_jpeg() returned None. This is expected if: (a) macOS has not yet "
-            "granted this terminal/process camera permission (System Settings > Privacy "
-            "& Security > Camera — the OS shows a one-time prompt on first access from a "
-            "given app, which may not appear/complete in a non-interactive shell), or "
-            "(b) no webcam is attached at index 0, or (c) another process holds the camera."
-        )
+        if settings.profile == "mac":
+            print(
+                "capture_jpeg() returned None. This is expected if: (a) macOS has not yet "
+                "granted this terminal/process camera permission (System Settings > Privacy "
+                "& Security > Camera — the OS shows a one-time prompt on first access from a "
+                "given app, which may not appear/complete in a non-interactive shell), or "
+                "(b) no webcam is attached at index 0, or (c) another process holds the camera."
+            )
+        else:
+            print(
+                "capture_jpeg() returned None. Check: (a) `rpicam-jpeg` is on PATH and "
+                "`rpicam-hello --list-cameras` sees the sensor, (b) nothing else is holding "
+                "the camera, (c) the ribbon cable is seated. Re-run with logging already on "
+                "above to see rpicam-jpeg's own stderr."
+            )
     else:
         print(f"capture_jpeg() succeeded: {len(jpeg)} bytes")
     cam.close()

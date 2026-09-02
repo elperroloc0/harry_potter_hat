@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import math
 import sys
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -9,7 +11,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hat.config import ServoCal, Settings
 
+logger = logging.getLogger(__name__)
+
 _BAR_WIDTH = 20
+
+# Background interpolation tick for PCA9685Servos. 200 Hz guarantees at
+# least ~60 intermediate steps across a full 0-180 degree sweep at the
+# calibrated 600 deg/s slew rate (0.3s / 5ms = 60) -- bench testing found
+# that anything coarser than that reads as a jump, not a motion.
+_TICK_S = 0.005
 
 
 class ServoController(ABC):
@@ -69,11 +79,20 @@ class MockServo(ServoController):
 
 
 class PCA9685Servos(ServoController):
-    """Written against Adafruit's documented adafruit-circuitpython-servokit
-    API; UNTESTED -- no PCA9685 hardware available yet. Verify calibration
-    constants on the bench before trusting this on real servos.
+    """Raw duty-cycle PCA9685 driver for the two MG90S servos (mouth, brows),
+    bench-calibrated by hand. Deliberately bypasses adafruit_motor.servo /
+    ServoKit's angle API -- on the bench that gave unstable, jittery motion.
+    Driving PCA9685.channels[n].duty_cycle directly, within ServoCal's
+    calibrated min_duty/max_duty range, is what actually worked.
 
-    `board`/`busio`/`adafruit_servokit` are Raspberry-Pi-only packages that
+    Motion is smoothed by a background thread that walks each servo's angle
+    toward its latest target at cal.max_slew_deg_per_s, so set_mouth/
+    set_brows are cheap, non-blocking target updates safe to call at any
+    frequency (including the ~50 Hz lip-sync loop) -- the servo itself never
+    sees an instant jump regardless of how often or rarely the caller calls
+    in.
+
+    `board`/`busio`/`adafruit_pca9685` are Raspberry-Pi-only packages that
     are not installed on the Mac dev machine, so they are imported lazily
     inside __init__ -- merely importing this module must never fail here.
     """
@@ -84,78 +103,92 @@ class PCA9685Servos(ServoController):
         # class requires the real hardware stack.
         import board  # type: ignore[import-not-found]
         import busio  # type: ignore[import-not-found]
-        from adafruit_servokit import ServoKit  # type: ignore[import-not-found]
+        from adafruit_pca9685 import PCA9685  # type: ignore[import-not-found]
 
         self.cal = cal
         i2c = busio.I2C(board.SCL, board.SDA)
-        self.kit = ServoKit(channels=16, i2c=i2c, frequency=cal.pca9685_freq_hz)
-
-        self.kit.servo[cal.mouth_channel].set_pulse_width_range(
-            cal.mouth_closed_us, cal.mouth_open_us
-        )
-        self.kit.servo[cal.brow_left_channel].set_pulse_width_range(
-            cal.brow_rest_us, cal.brow_raised_us
-        )
-        self.kit.servo[cal.brow_right_channel].set_pulse_width_range(
-            cal.brow_rest_us, cal.brow_raised_us
-        )
+        self.pca = PCA9685(i2c)
+        self.pca.frequency = cal.pca9685_freq_hz
 
         self._mouth_angle = 0.0
         self._brow_angle = 0.0
-        self._mouth_last_t = time.monotonic()
-        self._brow_last_t = self._mouth_last_t
+        self._mouth_target = 0.0
+        self._brow_target = 0.0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
 
-        # Park in a known-good rest position on startup.
-        self.set_mouth(0.0)
-        self.set_brows(0.0)
+        # Park in a known-good rest position immediately, before the
+        # background thread (or anything else) touches the hardware.
+        self._write(cal.mouth_channel, self._mouth_angle)
+        self._write(cal.brow_channel, self._brow_angle)
+
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
     def set_mouth(self, openness: float) -> None:
-        openness = _clamp01(openness)
-        target_angle = openness * 180.0
-        angle, now = _slew(
-            target_angle, self._mouth_angle, self._mouth_last_t, self.cal.max_slew_deg_per_s
-        )
-        self._mouth_angle = angle
-        self._mouth_last_t = now
-        self.kit.servo[self.cal.mouth_channel].angle = angle
+        with self._lock:
+            self._mouth_target = _clamp01(openness) * 180.0
 
     def set_brows(self, raised: float) -> None:
-        raised = _clamp01(raised)
-        target_angle = raised * 180.0
-        angle, now = _slew(
-            target_angle, self._brow_angle, self._brow_last_t, self.cal.max_slew_deg_per_s
-        )
-        self._brow_angle = angle
-        self._brow_last_t = now
-        self.kit.servo[self.cal.brow_left_channel].angle = angle
-        self.kit.servo[self.cal.brow_right_channel].angle = angle
+        with self._lock:
+            self._brow_target = _clamp01(raised) * 180.0
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            with self._lock:
+                mouth_target = self._mouth_target
+                brow_target = self._brow_target
+            self._mouth_angle = _step(
+                self._mouth_angle, mouth_target, self.cal.max_slew_deg_per_s, _TICK_S
+            )
+            self._brow_angle = _step(
+                self._brow_angle, brow_target, self.cal.max_slew_deg_per_s, _TICK_S
+            )
+            self._write(self.cal.mouth_channel, self._mouth_angle)
+            self._write(self.cal.brow_channel, self._brow_angle)
+            time.sleep(_TICK_S)
+
+    def _write(self, channel: int, angle: float) -> None:
+        self.pca.channels[channel].duty_cycle = _angle_to_duty(angle, self.cal)
 
     def close(self) -> None:
-        # Park closed/resting; leave the I2C bus as-is (no documented
-        # "release" call in the ServoKit API).
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        # Explicitly silence both channels. The PCA9685 keeps outputting
+        # whatever duty cycle it was last told, on its own, indefinitely --
+        # a Python process exiting does not stop it. Leaving a stale signal
+        # live is exactly what caused the servo to lurch/spin on the *next*
+        # run before this script had done anything; zeroing duty_cycle here
+        # is what actually fixed it on the bench.
         try:
-            self.set_mouth(0.0)
-            self.set_brows(0.0)
+            self.pca.channels[self.cal.mouth_channel].duty_cycle = 0
+            self.pca.channels[self.cal.brow_channel].duty_cycle = 0
         except Exception:
-            pass
+            logger.exception("Failed to zero PCA9685 channels on close")
 
 
 def _clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 
 
-def _slew(target_angle: float, last_angle: float, last_t: float, max_slew_deg_per_s: float):
-    """Limit how far `last_angle` may move toward `target_angle` given the
-    time elapsed since `last_t`, at `max_slew_deg_per_s`. Returns (new_angle, now)."""
-    now = time.monotonic()
-    dt = max(0.0, now - last_t)
+def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
+    """Map a 0-180 degree servo angle to a 16-bit PCA9685 duty cycle, using
+    the bench-calibrated safe range in `cal`. Outside that range the servo
+    doesn't hit a mechanical stop -- it loses tracking and spins
+    continuously -- so clamping to [0, 180] here is a hard limit, not a
+    suggestion."""
+    angle = max(0.0, min(180.0, angle))
+    duty = cal.min_duty + (angle / 180.0) * (cal.max_duty - cal.min_duty)
+    return int(duty * 65535)
+
+
+def _step(current: float, target: float, max_slew_deg_per_s: float, dt: float) -> float:
+    """Move `current` toward `target` by at most `max_slew_deg_per_s * dt`."""
     max_step = max_slew_deg_per_s * dt
-    delta = target_angle - last_angle
+    delta = target - current
     if abs(delta) <= max_step:
-        new_angle = target_angle
-    else:
-        new_angle = last_angle + math.copysign(max_step, delta)
-    return new_angle, now
+        return target
+    return current + math.copysign(max_step, delta)
 
 
 def make_servo(settings: "Settings") -> ServoController:

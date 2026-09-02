@@ -9,10 +9,10 @@ from elevenlabs.types.voice_settings import VoiceSettings
 from hat.config import settings
 from hat.tts.base import Lang, PcmAudio, SynthesisError, Synthesizer
 
-DEFAULT_MODEL_ID = "eleven_flash_v2_5"
-
 # eleven_flash_v2_5 supports language enforcement via language_code; our
 # Lang literal ("es"/"en") already matches ElevenLabs' expected codes.
+# eleven_multilingual_v2 accepts the param too but treats it more loosely
+# (leans on the text itself) -- worth listening for if you switch models.
 _LANG_CODES: dict[Lang, str] = {"es": "es", "en": "en"}
 
 
@@ -34,7 +34,7 @@ class ElevenLabsSynth(Synthesizer):
         self,
         api_key: str | None = None,
         voice_id: str = settings.elevenlabs_voice_id,
-        model_id: str = DEFAULT_MODEL_ID,
+        model_id: str = settings.elevenlabs_model_id,
         sample_rate: int = 22050,
         voice_settings: VoiceSettings | None = None,
     ) -> None:
@@ -45,7 +45,12 @@ class ElevenLabsSynth(Synthesizer):
         self.voice_settings = (
             voice_settings
             if voice_settings is not None
-            else VoiceSettings(stability=0.4, similarity_boost=0.75)
+            else VoiceSettings(
+                stability=settings.elevenlabs_stability,
+                similarity_boost=settings.elevenlabs_similarity_boost,
+                style=settings.elevenlabs_style,
+                use_speaker_boost=settings.elevenlabs_speaker_boost,
+            )
         )
         # Constructing the client never touches the network and never
         # fails even with an empty/bogus key -- only synth() calls out.

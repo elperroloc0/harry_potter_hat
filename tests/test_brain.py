@@ -13,9 +13,11 @@ import pytest
 from hat.brain.client import ConversationManager
 from hat.brain.persona import (
     FALLBACK_LINES,
-    GREETING_NO_APPEARANCE,
-    GREETING_WITH_APPEARANCE,
+    LOOKING_LINE,
     PARTING,
+    SIT_LINE,
+    SORTING_SEED_NO_APPEARANCE,
+    SORTING_SEED_WITH_APPEARANCE,
     STILL_THERE,
     SYSTEM_PROMPT,
 )
@@ -38,20 +40,20 @@ def test_system_prompt_is_nonempty_and_has_key_markers():
     assert "Slytherin" in SYSTEM_PROMPT
 
 
-def test_greeting_with_appearance_formats():
-    out = GREETING_WITH_APPEARANCE.format(description="a boy in a blue scarf.", lang="en")
+def test_sorting_seed_with_appearance_formats():
+    out = SORTING_SEED_WITH_APPEARANCE.format(description="a boy in a blue scarf.", lang="en")
     assert "a boy in a blue scarf." in out
     assert "[lang: en]" in out
     assert "Castle's note" in out
 
 
-def test_greeting_no_appearance_formats():
-    out = GREETING_NO_APPEARANCE.format(lang="es")
+def test_sorting_seed_no_appearance_formats():
+    out = SORTING_SEED_NO_APPEARANCE.format(lang="es")
     assert "[lang: es]" in out
     assert "perceive nothing" in out
 
 
-@pytest.mark.parametrize("mapping", [FALLBACK_LINES, STILL_THERE, PARTING])
+@pytest.mark.parametrize("mapping", [FALLBACK_LINES, STILL_THERE, PARTING, LOOKING_LINE, SIT_LINE])
 def test_bilingual_maps_have_both_languages(mapping):
     assert set(mapping.keys()) >= {"es", "en"}
     for lang in ("es", "en"):
@@ -247,3 +249,56 @@ def test_refusal_stop_reason_falls_back():
     assert text == FALLBACK_LINES["es"]
     # Refusal should not be appended as a real assistant turn.
     assert conv.turns == 1
+
+
+def test_start_sorting_splits_multiline_reply_into_beats():
+    reply = "Plenty of courage, I see...\nDifficult... very difficult...\nGRYFFINDOR!"
+    client = _FakeClient([_FakeResponse(reply)])
+    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+
+    beats = conv.start_sorting("a red scarf", "en")
+
+    assert beats == ["Plenty of courage, I see...", "Difficult... very difficult...", "GRYFFINDOR!"]
+    assert "a red scarf" in conv.messages[0]["content"]
+
+
+def test_start_sorting_drops_blank_lines():
+    reply = "Hmm...\n\nSLYTHERIN!\n"
+    client = _FakeClient([_FakeResponse(reply)])
+    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+
+    beats = conv.start_sorting(None, "es")
+
+    assert beats == ["Hmm...", "SLYTHERIN!"]
+
+
+def test_start_sorting_falls_back_to_single_beat_on_single_line_reply():
+    client = _FakeClient([_FakeResponse("RAVENCLAW!")])
+    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+
+    beats = conv.start_sorting(None, "en")
+
+    assert beats == ["RAVENCLAW!"]
+
+
+def test_start_sorting_injects_a_flavor_hint():
+    client = _FakeClient([_FakeResponse("HUFFLEPUFF!")])
+    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+
+    conv.start_sorting(None, "en")
+
+    assert "private impression stirs in you" in conv.messages[0]["content"]
+
+
+def test_start_sorting_hints_vary_across_calls():
+    # Not guaranteed on any single pair, but with 14 hints, 20 draws should
+    # not all land on the same one.
+    client = _FakeClient([_FakeResponse("GRYFFINDOR!")] * 20)
+    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+
+    seeds = set()
+    for _ in range(20):
+        conv.start_sorting(None, "en")
+        seeds.add(conv.messages[0]["content"])
+
+    assert len(seeds) > 1

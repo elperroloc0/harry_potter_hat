@@ -50,14 +50,35 @@ class OllamaDescriber:
                     ],
                     "stream": False,
                     "keep_alive": "30m",
-                    "options": {"temperature": 0.2, "num_predict": 120},
+                    # qwen3-vl:8b is a "thinking" model: it spends part of
+                    # this budget on a hidden reasoning pass (message.thinking)
+                    # before it ever writes message.content. Confirmed live
+                    # against this project's actual Ollama instance that
+                    # Ollama's think:false does not suppress that pass here,
+                    # and 120 was too small a budget -- the model would burn
+                    # it all on thinking and return empty content every time
+                    # (done_reason "length", content ""). 500 leaves real
+                    # headroom above the ~150-250 tokens a normal reply used
+                    # in testing; a visually busy/ambiguous photo can still
+                    # exhaust it, in which case describe() degrades to None
+                    # same as any other failure (see the empty-content check
+                    # below).
+                    "options": {"temperature": 0.2, "num_predict": 500},
                 },
                 timeout=self.timeout_s,
             )
             resp.raise_for_status()
-            content = resp.json()["message"]["content"]
-            content = content.strip()
-            return content or None
+            body = resp.json()
+            content = body["message"]["content"].strip()
+            if not content:
+                logger.warning(
+                    "OllamaDescriber.describe got an empty reply (done_reason=%s) -- "
+                    "likely the model spent its whole token budget on its hidden "
+                    "reasoning pass before writing an answer; degrading to None",
+                    body.get("done_reason"),
+                )
+                return None
+            return content
         except Exception:
             logger.warning("OllamaDescriber.describe failed; degrading to None", exc_info=True)
             return None

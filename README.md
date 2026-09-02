@@ -35,6 +35,11 @@ python -m hat.main                         # the real thing, once all subsystems
 
 ## Raspberry Pi deployment
 
-Not yet written — hardware hasn't arrived. Will cover: Pi OS setup, I2C
-enable, USB sound card, Bluetooth speaker pairing, pointing `OLLAMA_URL` at
-the Mac over LAN, and a systemd service.
+Not fully written yet, but the servo/camera/vision pieces are bench-tested:
+`cp .env.pi.example .env` on the Pi for the PROFILE=pi settings (PCA9685
+servos, rpicam-jpeg camera, Ollama over LAN), then
+`sudo apt install -y libportaudio2` (required for `sounddevice`/audio
+playback to import at all on Linux -- see requirements-pi.txt) followed by
+`pip install -r requirements.txt -r requirements-pi.txt`. Still missing:
+full Pi OS setup docs, I2C enable, USB sound card, Bluetooth speaker
+pairing, and a systemd service.

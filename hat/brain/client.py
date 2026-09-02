@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
+import random
 
 import anthropic
 
 from hat.audio.types import Transcript
 from hat.brain.persona import (
     FALLBACK_LINES,
-    GREETING_NO_APPEARANCE,
-    GREETING_WITH_APPEARANCE,
+    SORTING_FLAVOR_HINTS,
+    SORTING_SEED_NO_APPEARANCE,
+    SORTING_SEED_WITH_APPEARANCE,
     SYSTEM_PROMPT,
 )
 
@@ -44,11 +46,11 @@ class ConversationManager:
         return len(self.messages)
 
     def start_session(self, appearance: str | None, lang: str) -> None:
-        """Reset history and seed it with the castle's greeting note."""
+        """Reset history and seed it with the castle's sorting note."""
         if appearance:
-            seed = GREETING_WITH_APPEARANCE.format(description=appearance, lang=lang)
+            seed = SORTING_SEED_WITH_APPEARANCE.format(description=appearance, lang=lang)
         else:
-            seed = GREETING_NO_APPEARANCE.format(lang=lang)
+            seed = SORTING_SEED_NO_APPEARANCE.format(lang=lang)
         self.messages = [{"role": "user", "content": seed}]
         self._session_lang = lang
 
@@ -56,9 +58,21 @@ class ConversationManager:
         self.messages = []
 
     def send_seed(self) -> str:
-        """Call the API with the just-seeded greeting turn and return the
-        assistant's greeting text, appending it to history."""
+        """Call the API with the just-seeded sorting note and return the
+        assistant's raw (possibly multi-line) reply, appending it to
+        history."""
         return self._call(fallback_lang=self._session_lang)
+
+    def start_sorting(self, appearance: str | None, lang: str) -> list[str]:
+        """Seed and run the automatic, non-interactive sorting monologue
+        that opens every visit. Splits the model's newline-separated reply
+        into the individual beats the orchestrator speaks in sequence."""
+        self.start_session(appearance, lang)
+        hint = random.choice(SORTING_FLAVOR_HINTS)
+        self.messages[0]["content"] += f" A private impression stirs in you as you look: {hint}."
+        text = self.send_seed()
+        beats = [line.strip() for line in text.splitlines() if line.strip()]
+        return beats or [text.strip()]
 
     def send(self, user_text: str, lang: str) -> str:
         self.messages.append({"role": "user", "content": f"{user_text}\n[lang: {lang}]"})
@@ -119,14 +133,16 @@ class HatBrain:
             max_tokens=settings.max_reply_tokens,
         )
 
-    def start_session(self, appearance: str | None, lang: str | None = None) -> str:
+    def start_sorting(self, appearance: str | None, lang: str | None = None) -> list[str]:
+        """Kick off a visit: the automatic sorting monologue, as a list of
+        beats to speak in order. Never raises -- degrades to a single
+        in-character fallback line."""
         lang = lang or self.settings.default_lang
         try:
-            self.conv.start_session(appearance, lang)
-            return self.conv.send_seed()
+            return self.conv.start_sorting(appearance, lang)
         except Exception:
-            logger.exception("Failed to start a new session")
-            return FALLBACK_LINES.get(lang, FALLBACK_LINES["en"])
+            logger.exception("Failed to start the sorting ceremony")
+            return [FALLBACK_LINES.get(lang, FALLBACK_LINES["en"])]
 
     def reply(self, t: Transcript) -> str:
         try:

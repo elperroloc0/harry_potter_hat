@@ -105,8 +105,8 @@ def main(argv: list[str] | None = None) -> None:
     lang = args.lang or settings.default_lang
 
     brain = HatBrain(settings)
-    greeting = brain.start_session(appearance, lang)
-    print(f"hat> {greeting}")
+    for beat in brain.start_sorting(appearance, lang):
+        print(f"hat> {beat}")
     if args.debug:
         _print_usage(brain.conv.last_response)
 

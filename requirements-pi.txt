@@ -1,3 +1,22 @@
-# Install in addition to requirements.txt, on the Pi only. Pulls in
-# adafruit-blinka, adafruit-circuitpython-pca9685, adafruit-circuitpython-motor.
-adafruit-circuitpython-servokit>=1.3.4
+# Install in addition to requirements.txt, on the Pi only.
+
+# Low-level PCA9685 access (board/busio/PCA9685.channels[n].duty_cycle).
+# Bench-tested this way deliberately instead of adafruit-circuitpython-
+# servokit -- the ServoKit/adafruit_motor.servo angle API gave unstable,
+# jittery motion; see hat/motion/servos.py:PCA9685Servos.
+adafruit-blinka>=8.0
+adafruit-circuitpython-pca9685>=3.4
+
+# picamera2 is deliberately NOT listed here: it has no PyPI wheel (apt-only,
+# needs --system-site-packages or the system Python), and hat/vision/camera.py
+# shells out to the rpicam-jpeg CLI instead -- already on the OS image, no
+# extra install needed. If you ever do switch to the picamera2 library:
+#   sudo apt install -y python3-picamera2
+# then create the venv with --system-site-packages so it's importable here.
+
+# Not a pip package, but required before `pip install sounddevice` will
+# actually work at import time -- the sounddevice wheel does not bundle
+# PortAudio on Linux, so without this hat.audio.player (and anything that
+# imports it, e.g. hat.speech) fails with "OSError: PortAudio library not
+# found" the moment it's imported, regardless of pip install succeeding:
+#   sudo apt install -y libportaudio2

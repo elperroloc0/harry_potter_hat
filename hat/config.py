@@ -21,7 +21,18 @@ class ServoCal:
     for an MG90S: outside roughly 0.2%-20% the servo doesn't hit a
     mechanical stop, it loses tracking and spins continuously, so 1.5%-14%
     (covering the full 0-180 degree sweep with margin on both sides) is a
-    hard limit, not a starting guess.
+    hard limit, not a starting guess -- do not narrow this to tune motion,
+    use the _deg fields below instead.
+
+    mouth_closed_deg/mouth_open_deg and brow_rest_deg/brow_raised_deg are
+    the separate, mechanical sub-range that set_mouth(0..1)/set_brows(0..1)
+    actually map into -- a bare servo horn sweeping the full 0-180 degrees
+    looks like a violent snap, not a mouth or eyebrow moving, so this is
+    normally a much narrower slice of the electrical range above. Tune
+    these by eye once the linkage is attached; the defaults are a
+    conservative starting guess (30 degrees of throw), not calibrated.
+    Either value in each pair may be the larger one -- direction doesn't
+    matter, only the two endpoints openness/raised interpolates between.
     """
 
     mouth_channel: int = 15
@@ -30,6 +41,10 @@ class ServoCal:
     min_duty: float = 0.015
     max_duty: float = 0.14
     max_slew_deg_per_s: float = 600.0
+    mouth_closed_deg: float = 75.0
+    mouth_open_deg: float = 105.0
+    brow_rest_deg: float = 75.0
+    brow_raised_deg: float = 105.0
 
 
 @dataclass(frozen=True)

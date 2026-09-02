@@ -126,16 +126,12 @@ class PCA9685Servos(ServoController):
         self._thread.start()
 
     def set_mouth(self, openness: float) -> None:
-        openness = _clamp01(openness)
         with self._lock:
-            self._mouth_target = _lerp(
-                self.cal.mouth_closed_deg, self.cal.mouth_open_deg, openness
-            )
+            self._mouth_target = _clamp01(openness) * 180.0
 
     def set_brows(self, raised: float) -> None:
-        raised = _clamp01(raised)
         with self._lock:
-            self._brow_target = _lerp(self.cal.brow_rest_deg, self.cal.brow_raised_deg, raised)
+            self._brow_target = _clamp01(raised) * 180.0
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -173,10 +169,6 @@ class PCA9685Servos(ServoController):
 
 def _clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
-
-
-def _lerp(a: float, b: float, t: float) -> float:
-    return a + (b - a) * t
 
 
 def _angle_to_duty(angle: float, cal: "ServoCal") -> int:

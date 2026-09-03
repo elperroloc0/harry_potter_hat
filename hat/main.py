@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 # Typed at the `you>` prompt under --text to play the part of the PIR sensor.
 SIT_TOKEN = "/sit"
 
+# One turn may chain a few tool calls -- look, then sort -- but not endlessly.
+MAX_TOOL_ROUNDS = 6
+
 
 class PrintVoice:
     """Fallback speech-out adapter used when hat.speech.create_voice isn't
@@ -148,7 +151,9 @@ def wait_for_seated(motion, brain) -> str:
     drained first -- because the hat has only just asked them to sit. If
     nobody ever does, the ceremony lapses quietly and the conversation
     carries on; the hat is not going anywhere."""
-    if not settings.use_motion_sensor:
+    if not settings.use_motion_sensor or not motion.ready():
+        if settings.use_motion_sensor:
+            logger.info("Chair sensor not warmed up yet; sorting without it")
         # No chair sensor in play: take their word for it and get on with
         # the ceremony rather than stalling on hardware that is not trusted.
         return brain.sorting_note(SEATED_NOTE)
@@ -192,8 +197,11 @@ def deliver(turn: HatTurn, brain, voice_input, voice, motion, cam, describer, la
     """Speak a turn and run whatever it silently decided to do, following the
     tool chain until the model has nothing left to act on. Speech always goes
     first: the words are what make someone look at the hat, or sit down, so
-    take_photo and sort_visitor must fire after they have been said."""
-    while True:
+    take_photo and sort_visitor must fire after they have been said.
+
+    Capped: a model that keeps calling tools would otherwise hold the loop
+    here indefinitely, and each sort_visitor can sit on the chair timeout."""
+    for _ in range(MAX_TOOL_ROUNDS):
         if turn.beats:
             with voice_input.hold():
                 for beat in turn.beats:
@@ -201,6 +209,7 @@ def deliver(turn: HatTurn, brain, voice_input, voice, motion, cam, describer, la
         if not turn.tool_uses:
             return
         turn = brain.submit_tool_results(run_tools(turn, brain, motion, cam, describer), lang)
+    logger.warning("Gave up after %d rounds of tool calls in one turn", MAX_TOOL_ROUNDS)
 
 
 def converse(brain, voice_input, voice, motion, cam, describer, lang) -> None:

@@ -16,6 +16,7 @@ boundaries so there is no audible seam/click every 80 ms.
 from __future__ import annotations
 
 import argparse
+import logging
 import queue
 import sys
 import threading
@@ -25,6 +26,8 @@ from typing import Iterator, Optional
 
 import numpy as np
 import sounddevice as sd
+
+logger = logging.getLogger(__name__)
 from scipy import signal
 
 from hat.audio.types import FRAME_SAMPLES, SAMPLE_RATE
@@ -81,6 +84,11 @@ class _PolyphaseDecimator:
 
     def reset(self) -> None:
         self._history = np.zeros(self._context, dtype=np.float64)
+
+
+#: How long the queue may stay empty, while not paused, before the input
+#: stream is assumed dead and reopened.
+_STALL_TIMEOUT_S = 5.0
 
 
 class MicStream:
@@ -190,12 +198,50 @@ class MicStream:
 
     def frames(self) -> Iterator[np.ndarray]:
         """Yield int16 mono 16 kHz frames of ``FRAME_SAMPLES`` length, blocking
-        until each one is available. Stops when the stream is closed."""
+        until each one is available. Stops when the stream is closed.
+
+        A dead PortAudio stream is silent in every sense: the callback simply
+        stops being invoked, the queue stays empty, and without the watchdog
+        below this loop would spin here forever while the hat appeared to be
+        running and simply never heard anything again. So a long enough
+        starvation, while not deliberately paused, is treated as a broken
+        stream and the device is reopened.
+        """
+        starved = 0.0
         while not self._closed.is_set():
             try:
-                yield self._queue.get(timeout=0.2)
+                frame = self._queue.get(timeout=0.2)
             except queue.Empty:
+                if self._paused:
+                    starved = 0.0
+                    continue
+                starved += 0.2
+                if starved >= _STALL_TIMEOUT_S:
+                    starved = 0.0
+                    self._reopen()
                 continue
+            starved = 0.0
+            yield frame
+
+    def _reopen(self) -> None:
+        """Tear the input stream down and open it again. Best effort: if it
+        fails we keep the old stream and try again after the next stall,
+        because a hat that is deaf for a few more seconds beats one that
+        crashes mid-conversation."""
+        logger.warning("No audio for %.0fs; restarting the input stream", _STALL_TIMEOUT_S)
+        old, self._stream = self._stream, None
+        try:
+            if old is not None:
+                old.stop()
+                old.close()
+        except Exception:
+            logger.debug("Failed closing the stalled stream", exc_info=True)
+        try:
+            self._open(None)
+            logger.info("Input stream restarted")
+        except Exception:
+            self._stream = old
+            logger.exception("Could not restart the input stream")
 
     def pause(self) -> None:
         """Half-duplex mute: stop feeding new frames and drop anything queued."""

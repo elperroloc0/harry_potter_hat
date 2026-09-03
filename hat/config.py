@@ -112,7 +112,7 @@ def load_settings() -> Settings:
     load_dotenv()
 
     languages = tuple(
-        lang.strip() for lang in os.environ.get("LANGUAGES", "es,en").split(",") if lang.strip()
+        lang.strip() for lang in os.environ.get("LANGUAGES", "es").split(",") if lang.strip()
     )
 
     # Spoken names the hat answers to when the openwakeword stack is absent
@@ -135,7 +135,7 @@ def load_settings() -> Settings:
         ollama_url=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"),
         vision_model=os.environ.get("VISION_MODEL", "qwen2.5vl:7b"),
         claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-5"),
-        languages=languages or ("es", "en"),
+        languages=languages or ("es",),
         default_lang=os.environ.get("DEFAULT_LANG", "es"),
         profile=os.environ.get("PROFILE", "mac"),  # type: ignore[arg-type]
         camera_index=int(os.environ.get("CAMERA_INDEX", "0")),

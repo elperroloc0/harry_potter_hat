@@ -47,6 +47,11 @@ class MotionSensor(ABC):
         """Take the pending event and clear it. True at most once per
         detection."""
 
+    def ready(self) -> bool:
+        """Whether the sensor can be trusted yet. A PIR needs half a minute
+        after power-up before its readings mean anything."""
+        return True
+
     @abstractmethod
     def close(self) -> None:
         """Release any hardware resources. Safe to call more than once."""
@@ -135,6 +140,8 @@ class PIRMotionSensor(_EventSensor):
 
     def __init__(self, pin: int, warmup_s: float = _PIR_WARMUP_S) -> None:
         super().__init__()
+        self.warmup_s = warmup_s
+        self._ready = threading.Event()
         from gpiozero import Device, MotionSensor as GPIOMotionSensor  # type: ignore[import-not-found]
         from gpiozero.pins.lgpio import LGPIOFactory  # type: ignore[import-not-found]
 
@@ -143,14 +150,25 @@ class PIRMotionSensor(_EventSensor):
         self.pin = pin
         self._sensor = GPIOMotionSensor(pin)
 
-        if warmup_s > 0:
-            logger.info("PIR sensor warming up for %.0fs before first use...", warmup_s)
-            time.sleep(warmup_s)
-
     def start_watching(self) -> None:
+        """Warm up in the background. The sensor reads unreliably for its
+        first half minute after power-up, but it is only ever consulted
+        inside a sorting, so there is no reason to hold up the whole hat --
+        and nothing to sort in the first thirty seconds anyway."""
+        threading.Thread(target=self._warm_then_watch, daemon=True).start()
+
+    def _warm_then_watch(self) -> None:
+        if self.warmup_s > 0:
+            logger.debug("PIR warming up for %.0fs", self.warmup_s)
+            time.sleep(self.warmup_s)
         # gpiozero runs this callback on its own thread; setting an Event is
         # all we do there, and the orchestrator picks it up between turns.
         self._sensor.when_motion = self._on_motion
+        self._ready.set()
+        logger.debug("PIR ready")
+
+    def ready(self) -> bool:
+        return self._ready.is_set()
 
     def _on_motion(self) -> None:
         logger.debug("PIR fired")

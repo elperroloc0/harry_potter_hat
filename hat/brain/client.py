@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import anthropic
 
 from hat.audio.types import Transcript
+from hat.config import settings
 from hat.brain.persona import (
     FALLBACK_LINES,
     SORTING_FLAVOR_HINTS,
@@ -16,6 +17,20 @@ from hat.brain.persona import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The hat talks all day, so history would otherwise grow without limit --
+# every turn slower and dearer than the last. Trimmed from the front, never
+# between a tool_use and its result: an orphaned pair is rejected outright.
+MAX_MESSAGES = 40
+
+
+def _fallback_line(lang: str) -> str:
+    """The in-character line spoken when the API itself fails. Falls back to
+    the configured default language rather than a hardcoded one -- the hat
+    speaks whatever LANGUAGES says, and that is Spanish alone now."""
+    return FALLBACK_LINES.get(lang) or FALLBACK_LINES.get(settings.default_lang) or next(
+        iter(FALLBACK_LINES.values())
+    )
 
 
 @dataclass
@@ -94,8 +109,24 @@ class ConversationManager:
         looks near-identical from the inside."""
         return f"{note} A private impression stirs in you as you look: {random.choice(SORTING_FLAVOR_HINTS)}."
 
+    def _trim(self) -> None:
+        if len(self.messages) <= MAX_MESSAGES:
+            return
+        cut = len(self.messages) - MAX_MESSAGES
+        # Land on a real spoken turn: a plain-string user message. Anything
+        # else is a tool result whose tool_use would be left dangling.
+        while cut < len(self.messages):
+            m = self.messages[cut]
+            if m["role"] == "user" and isinstance(m["content"], str):
+                break
+            cut += 1
+        if cut < len(self.messages):
+            logger.debug("Trimming %d old messages", cut)
+            self.messages = self.messages[cut:]
+
     def _call(self, fallback_lang: str) -> HatTurn:
-        fallback = HatTurn(beats=[FALLBACK_LINES.get(fallback_lang, FALLBACK_LINES["en"])])
+        self._trim()
+        fallback = HatTurn(beats=[_fallback_line(fallback_lang)])
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -178,4 +209,4 @@ class HatBrain:
             return call()
         except Exception:
             logger.exception("Failed to %s", what)
-            return HatTurn(beats=[FALLBACK_LINES.get(lang, FALLBACK_LINES["en"])])
+            return HatTurn(beats=[_fallback_line(lang)])

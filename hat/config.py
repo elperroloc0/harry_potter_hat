@@ -86,11 +86,11 @@ def load_settings() -> Settings:
         default_lang=os.environ.get("DEFAULT_LANG", "es"),
         profile=os.environ.get("PROFILE", "mac"),  # type: ignore[arg-type]
         camera_index=int(os.environ.get("CAMERA_INDEX", "0")),
-        # BCM GPIO pin the PIR sensor's OUT line is wired to. GPIO4 avoids
-        # the I2C pins (2/3, already used by the PCA9685) and other
-        # reserved pins; change to match whatever pin you actually wire it
-        # to on the bench.
-        motion_sensor_pin=int(os.environ.get("HAT_MOTION_SENSOR_PIN", "4")),
+        # BCM GPIO pin the PIR sensor's OUT line is wired to. 17 (physical
+        # pin 11) is what's actually wired and bench-tested; change to
+        # match if you rewire it. Avoid the I2C pins (2/3, used by the
+        # PCA9685).
+        motion_sensor_pin=int(os.environ.get("HAT_MOTION_SENSOR_PIN", "17")),
         # qwen2.5vl:7b (default since 2026-09-02) has no hidden reasoning
         # pass, unlike qwen3-vl:8b which this replaced -- measured live
         # against a real, deliberately hard photo (dim light, out of focus,

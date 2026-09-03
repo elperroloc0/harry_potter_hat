@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
@@ -8,6 +9,12 @@ if TYPE_CHECKING:
     from hat.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# HC-SR501 (and similar PIR sensors) read unreliably for a warmup period
+# right after power-up -- confirmed on the bench: constructing the sensor
+# and immediately calling wait_for_motion() gives spurious/unstable
+# readings. 30s is what was actually tested as sufficient.
+_PIR_WARMUP_S = 30.0
 
 
 class MotionSensor(ABC):
@@ -42,9 +49,19 @@ class ManualMotionSensor(MotionSensor):
 class PIRMotionSensor(MotionSensor):
     """Real PIR motion sensor (e.g. HC-SR501) via GPIO, using gpiozero.
 
-    Deliberately gpiozero, not the older RPi.GPIO: Raspberry Pi 5 moved
-    GPIO to a new RP1 southbridge chip that RPi.GPIO does not support
-    natively, while gpiozero's `lgpio` pin factory does.
+    Deliberately gpiozero, not the older RPi.GPIO: on the bench, RPi.GPIO
+    raised "RuntimeError: Cannot determine SOC peripheral base address" --
+    Raspberry Pi 5 moved GPIO to a new RP1 southbridge chip that RPi.GPIO
+    doesn't support at all, not just unreliably.
+
+    gpiozero's own pin factory auto-detection was NOT sufficient on this
+    Pi 5 either -- confirmed on the bench that it needs to be pointed at
+    the RP1 controller explicitly (chip 4 / /dev/gpiochip4) via
+    `Device.pin_factory = LGPIOFactory(chip=4)` before constructing any
+    gpiozero device. This is process-wide gpiozero state, not specific to
+    this one sensor -- if the project ever adds another plain-GPIO device
+    (a button, a relay, a future tilt switch), it rides on the same
+    pin_factory setting and does not need to repeat this.
 
     `gpiozero` is a Raspberry-Pi-only package not installed on the Mac dev
     machine, so it's imported lazily inside __init__ -- merely importing
@@ -52,11 +69,18 @@ class PIRMotionSensor(MotionSensor):
     hat/motion/servos.py and RpicamJpegCamera in hat/vision/camera.py).
     """
 
-    def __init__(self, pin: int) -> None:
-        from gpiozero import MotionSensor as GPIOMotionSensor  # type: ignore[import-not-found]
+    def __init__(self, pin: int, warmup_s: float = _PIR_WARMUP_S) -> None:
+        from gpiozero import Device, MotionSensor as GPIOMotionSensor  # type: ignore[import-not-found]
+        from gpiozero.pins.lgpio import LGPIOFactory  # type: ignore[import-not-found]
+
+        Device.pin_factory = LGPIOFactory(chip=4)
 
         self.pin = pin
         self._sensor = GPIOMotionSensor(pin)
+
+        if warmup_s > 0:
+            logger.info("PIR sensor warming up for %.0fs before first use...", warmup_s)
+            time.sleep(warmup_s)
 
     def wait_for_motion(self, timeout: Optional[float] = None) -> bool:
         return bool(self._sensor.wait_for_motion(timeout=timeout))

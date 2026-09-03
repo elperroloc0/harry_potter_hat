@@ -1,24 +1,25 @@
-"""The orchestrator: wake word -> Claude conversation -> speech, camera, PIR.
+"""The orchestrator: microphone -> Claude conversation -> speech, camera, PIR.
 
-    python -m hat.main [--no-wake] [--no-vision] [--text] [--image path.jpg]
+    python -m hat.main [--no-vision] [--text] [--image path.jpg]
 
-A visit is a live conversation the model itself leads, not a fixed script.
-Two physical events feed into it:
+The hat is simply awake. It listens, answers, and keeps listening; there are
+no visits, no sessions and no goodbyes, and nothing it says is scripted --
+every word comes from the model. Two pieces of hardware feed into that
+conversation:
 
-  * the wake word (hat.wake, via VoiceInput.wait_for_wake) starts a visit;
-  * the PIR sensor (hat.sensors.motion) fires when the visitor actually SITS
-    DOWN in the chair -- its range is turned down to the minimum on the board
-    itself, so it ignores anyone at a distance. That event is injected into
-    the conversation as the castle's note, and it is the gate the ritual
-    hangs on: the hat does not name a house before it arrives.
+  * the camera, when the model calls take_photo, which it does while the
+    person is still standing in front of it;
+  * the PIR sensor, which fires when someone actually SITS DOWN in the chair
+    -- its range is turned right down on the board itself, so it ignores
+    anyone at a distance. That is what sort_visitor waits for.
 
-Everything else -- when to greet, what to ask, when to look at the visitor
-(take_photo), when the visit is over (end_session) -- is the model's own
-decision, made in the system prompt, not in branches here. In particular
-there is deliberately no "an adult is helping" mode: whatever is said in
+Sorting is a function of the conversation, not the shape of the program: the
+model calls sort_visitor when it has been asked for a house, or when the talk
+has plainly arrived there. Everything else -- what to ask, when to look, when
+to sort -- is decided in the system prompt rather than in branches here.
+There is deliberately no "an adult is helping" mode: whatever is said in
 front of the hat, by whoever, goes into the same conversation.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,7 @@ import time
 
 from hat.audio.stub import FakeVoiceInput
 from hat.brain.client import HatBrain, HatTurn
-from hat.brain.persona import NO_SIGHT_RESULT, PARTING, STILL_THERE
+from hat.brain.persona import NOT_SEATED_NOTE, NO_SIGHT_RESULT, SEATED_NOTE
 from hat.config import settings
 from hat.sensors.motion import ManualMotionSensor
 from hat.vision.camera import make_camera
@@ -140,14 +141,32 @@ def capture_appearance(cam, describer) -> str:
     return describer.describe(jpeg) or NO_SIGHT_RESULT
 
 
-def run_tools(turn: HatTurn, cam, describer) -> list[dict]:
+def wait_for_seated(motion, brain) -> str:
+    """sort_visitor: block until the chair reports someone in it.
+
+    Whoever was detected sitting earlier does not count -- the event is
+    drained first -- because the hat has only just asked them to sit. If
+    nobody ever does, the ceremony lapses quietly and the conversation
+    carries on; the hat is not going anywhere."""
+    motion.poll()
+    deadline = time.monotonic() + settings.seat_timeout_s
+    while time.monotonic() < deadline:
+        if motion.poll():
+            return brain.sorting_note(SEATED_NOTE)
+        time.sleep(0.1)
+    logger.info("Nobody sat down within %.0fs; sorting lapsed", settings.seat_timeout_s)
+    return NOT_SEATED_NOTE
+
+
+def run_tools(turn: HatTurn, brain, motion, cam, describer) -> list[dict]:
     """Execute the turn's tool calls and build the tool_result blocks. All
-    of them go back in a single user message (see submit_tool_results).
-    end_session never reaches here -- run_ritual returns before that."""
+    of them go back in a single user message (see submit_tool_results)."""
     results = []
     for block in turn.tool_uses:
         if block.name == "take_photo":
             content = capture_appearance(cam, describer)
+        elif block.name == "sort_visitor":
+            content = wait_for_seated(motion, brain)
         else:
             logger.warning("Model called an unknown tool: %s", block.name)
             content = "That is not among your powers."
@@ -164,76 +183,52 @@ def simulate_seated(motion) -> None:
     simulate()
 
 
-def run_ritual(brain, voice_input, voice, motion, cam, describer, lang, seated_at_start=False) -> None:
-    """One visit, start to finish. Speaks each turn, runs whatever the model
-    silently decided to do, then waits for the world to say something back --
-    either words (from anyone) or the PIR firing."""
-    with voice_input.hold():
-        voice.play_effect("wake_ack")
-
-    turn = brain.start_ritual(lang, seated=seated_at_start)
-    started = time.monotonic()
-    current_lang = lang
-    seated_handled = seated_at_start
-    misses = 0
-
+def deliver(turn: HatTurn, brain, voice_input, voice, motion, cam, describer, lang) -> None:
+    """Speak a turn and run whatever it silently decided to do, following the
+    tool chain until the model has nothing left to act on. Speech always goes
+    first: the words are what make someone look at the hat, or sit down, so
+    take_photo and sort_visitor must fire after they have been said."""
     while True:
-        # Speak first, always: the words are what make the visitor look at
-        # the hat, so take_photo must fire *after* they have been said.
         if turn.beats:
             with voice_input.hold():
                 for beat in turn.beats:
-                    voice.speak(beat, current_lang)
-
-        if turn.wants("end_session"):
-            logger.info("Model ended the visit")
+                    voice.speak(beat, lang)
+        if not turn.tool_uses:
             return
+        turn = brain.submit_tool_results(run_tools(turn, brain, motion, cam, describer), lang)
 
-        if turn.tool_uses:
-            turn = brain.submit_tool_results(run_tools(turn, cam, describer), current_lang)
+
+def converse(brain, voice_input, voice, motion, cam, describer, lang) -> None:
+    """Listen, answer, keep listening. Runs for as long as the hat is
+    powered: there is no session to end and nothing to wait to be woken by.
+
+    Silence is answered with silence -- no stock "are you still there", which
+    is how a prop ends up talking to an empty room. A long enough gap only
+    means the conversation is dropped, quietly, so the next person does not
+    inherit the last one's answers."""
+    current_lang = lang
+    last_heard = time.monotonic()
+
+    while True:
+        utterance = voice_input.listen_once(timeout=settings.listen_timeout_s)
+
+        if utterance is None or not utterance.transcript.text.strip():
+            if brain.conv.turns and time.monotonic() - last_heard > settings.session_max_s:
+                logger.info("Quiet for %.0fs; forgetting the conversation", settings.session_max_s)
+                brain.forget()
             continue
 
-        if time.monotonic() - started > settings.session_max_s:
-            logger.info("session_max_s (%.0fs) reached; ending visit", settings.session_max_s)
-            return
+        text = utterance.transcript.text.strip()
+        if text == SIT_TOKEN:
+            simulate_seated(motion)
+            continue
 
-        # Wait until something produces a new turn: the visitor sitting down,
-        # or anyone saying anything. This inner loop only exits with a fresh
-        # turn in hand (or by ending the visit).
-        while True:
-            if not seated_handled and motion.poll():
-                seated_handled = True
-                turn = brain.note_seated(current_lang)
-                break
-
-            utterance = voice_input.listen_once(
-                timeout=settings.listen_timeout_s,
-                cancel=(None if seated_handled else motion.pending),
-            )
-
-            if utterance is None or not utterance.transcript.text.strip():
-                # A listen cut short by the PIR isn't a silence -- go round
-                # and let the seated branch above pick it up.
-                if not seated_handled and motion.pending():
-                    continue
-                misses += 1
-                if misses >= 2:
-                    with voice_input.hold():
-                        voice.speak(PARTING[current_lang], current_lang)
-                    return
-                with voice_input.hold():
-                    voice.speak(STILL_THERE[current_lang], current_lang)
-                continue
-
-            text = utterance.transcript.text.strip()
-            if text == SIT_TOKEN:
-                simulate_seated(motion)
-                continue
-
-            misses = 0
-            current_lang = utterance.transcript.lang
-            turn = brain.reply(utterance.transcript)
-            break
+        last_heard = time.monotonic()
+        current_lang = utterance.transcript.lang
+        deliver(
+            brain.reply(utterance.transcript),
+            brain, voice_input, voice, motion, cam, describer, current_lang,
+        )
 
 
 def run(args) -> None:
@@ -256,25 +251,7 @@ def run(args) -> None:
     lang = settings.default_lang
 
     try:
-        while True:
-            # Idle. Two ways out: the wake word, or someone who skips the
-            # ceremony and simply sits down in the chair.
-            woke = voice_input.wait_for_wake(cancel=motion.pending)
-            just_sat = motion.poll()
-            seated_at_start = just_sat and not woke
-            if not woke and not seated_at_start:
-                continue
-
-            try:
-                run_ritual(
-                    brain, voice_input, voice, motion, cam, describer, lang, seated_at_start
-                )
-            except Exception:
-                # A hiccup in one visit (TTS glitch, camera dropout, etc.)
-                # should not take the whole prop down for the next visitor.
-                logger.exception("Unexpected error during a visit; recovering for the next one")
-            finally:
-                brain.end_session()
+        converse(brain, voice_input, voice, motion, cam, describer, lang)
     except (KeyboardInterrupt, EOFError):
         # EOFError: stdin closed under --text/FakeVoiceInput or
         # ManualMotionSensor (e.g. piped input ran out, or Ctrl-D at a

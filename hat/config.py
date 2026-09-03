@@ -80,6 +80,7 @@ class Settings:
     vision_timeout_s: float
     listen_timeout_s: float
     session_max_s: float
+    seat_timeout_s: float
     max_reply_tokens: int
     tts_backend: Literal["elevenlabs", "say"]
     servo_backend: Literal["mock", "pca9685"]
@@ -150,7 +151,11 @@ def load_settings() -> Settings:
         # project_hat_hardware_status memory for the full comparison.
         vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "20.0")),
         listen_timeout_s=float(os.environ.get("LISTEN_TIMEOUT_S", "8.0")),
+        # How long sort_visitor waits for the chair before giving up. Long
+        # enough for a hesitant child to be coaxed into it, short enough that
+        # a wandered-off one does not strand the ceremony.
         session_max_s=float(os.environ.get("SESSION_MAX_S", "300.0")),
+        seat_timeout_s=float(os.environ.get("SEAT_TIMEOUT_S", "60.0")),
         max_reply_tokens=int(os.environ.get("MAX_REPLY_TOKENS", "500")),
         tts_backend=os.environ.get("HAT_TTS_BACKEND", "say"),  # type: ignore[arg-type]
         servo_backend=os.environ.get("HAT_SERVO_BACKEND", "mock"),  # type: ignore[arg-type]

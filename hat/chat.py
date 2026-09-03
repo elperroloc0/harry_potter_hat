@@ -5,8 +5,8 @@
 Dev convenience for iterating on the persona/brain without the rest of the
 stack. It runs the same turn loop as the real orchestrator (hat.main), so
 tool calls behave the same way: take_photo describes --image if you gave
-one, /sit stands in for the PIR sensor firing when the visitor sits down,
-and end_session ends the visit.
+one, and /sit stands in for the PIR sensor firing under sort_visitor. Like
+the real thing it never ends -- Ctrl-D when you are done.
 
 The real pipeline gets `lang` from Whisper (STT), never from typed text —
 the heuristic here (`guess_lang`) exists only so this REPL is usable
@@ -19,7 +19,7 @@ import argparse
 import re
 
 from hat.brain.client import HatBrain
-from hat.brain.persona import NO_SIGHT_RESULT
+from hat.brain.persona import NOT_SEATED_NOTE, NO_SIGHT_RESULT, SEATED_NOTE
 from hat.audio.types import Transcript
 from hat.config import settings
 from hat.vision.camera import StaticImageStub
@@ -109,36 +109,11 @@ def main(argv: list[str] | None = None) -> None:
     lang = args.lang or settings.default_lang
     brain = HatBrain(settings)
 
-    print(f"(type {SIT_TOKEN} to simulate sitting down in the chair; Ctrl-D to quit)")
-
-    turn = brain.start_ritual(lang)
-    seated_handled = False
+    print("(type /sit when you have sat down in the chair; Ctrl-D to quit)")
+    seated = False
 
     try:
         while True:
-            for beat in turn.beats:
-                print(f"hat> {beat}")
-            if args.debug:
-                _print_usage(brain.conv.last_response)
-
-            if turn.wants("end_session"):
-                print("(the hat returns to waiting for the next visitor)")
-                break
-
-            if turn.tool_uses:
-                results = []
-                for block in turn.tool_uses:
-                    content = (
-                        build_appearance(image)
-                        if block.name == "take_photo"
-                        else "That is not among your powers."
-                    )
-                    results.append(
-                        {"type": "tool_result", "tool_use_id": block.id, "content": content}
-                    )
-                turn = brain.submit_tool_results(results, lang)
-                continue
-
             try:
                 raw = input("you> ").strip()
             except EOFError:
@@ -146,19 +121,42 @@ def main(argv: list[str] | None = None) -> None:
                 break
             if not raw:
                 continue
-
             if raw == SIT_TOKEN:
-                if seated_handled:
-                    print("(already seated)")
-                    continue
-                seated_handled = True
-                turn = brain.note_seated(lang)
+                seated = True
+                print("(the chair reports someone in it)")
                 continue
 
             lang = args.lang or guess_lang(raw)
             turn = brain.reply(Transcript(text=raw, lang=lang))
+
+            while True:
+                for beat in turn.beats:
+                    print(f"hat> {beat}")
+                if args.debug:
+                    _print_usage(brain.conv.last_response)
+                if not turn.tool_uses:
+                    break
+
+                results = []
+                for block in turn.tool_uses:
+                    if block.name == "take_photo":
+                        content = build_appearance(image)
+                    elif block.name == "sort_visitor":
+                        # Stands in for waiting on the PIR sensor.
+                        if not seated:
+                            print("(waiting for you to sit -- type /sit, or anything else to skip)")
+                            seated = input("sit> ").strip() == SIT_TOKEN
+                        content = (
+                            brain.sorting_note(SEATED_NOTE) if seated else NOT_SEATED_NOTE
+                        )
+                    else:
+                        content = "That is not among your powers."
+                    results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": content}
+                    )
+                turn = brain.submit_tool_results(results, lang)
     finally:
-        brain.end_session()
+        brain.forget()
 
 
 if __name__ == "__main__":

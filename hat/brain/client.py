@@ -9,10 +9,6 @@ import anthropic
 from hat.audio.types import Transcript
 from hat.brain.persona import (
     FALLBACK_LINES,
-    OPENING_MANNERS,
-    RITUAL_OPENING_SEED,
-    RITUAL_OPENING_SEED_SEATED,
-    SEATED_NOTE,
     SORTING_FLAVOR_HINTS,
     SYSTEM_PROMPT,
     TOOLS,
@@ -70,37 +66,12 @@ class ConversationManager:
     def turns(self) -> int:
         return len(self.messages)
 
-    def start_ritual(self, lang: str, seated: bool = False) -> HatTurn:
-        """Reset history, seed the castle's opening note, and take the hat's
-        first turn. `seated` covers the visitor who simply dropped into the
-        chair without a wake word -- no photo is possible from behind."""
-        template = RITUAL_OPENING_SEED_SEATED if seated else RITUAL_OPENING_SEED
-        seed = template.format(lang=lang)
-        hint = random.choice(SORTING_FLAVOR_HINTS)
-        manner = random.choice(OPENING_MANNERS)
-        seed += (
-            f" A private impression stirs in you as you sense them: {hint}."
-            f" Open {manner} — your own words, never a line you have used before."
-        )
-        self.messages = [{"role": "user", "content": seed}]
-        self._session_lang = lang
-        return self._call(fallback_lang=lang)
-
     def send(self, user_text: str, lang: str) -> HatTurn:
         """A real utterance heard in front of the hat -- the visitor's, or
         anyone else's. No speaker attribution: the persona decides from
         content alone what it is hearing."""
         self.messages.append({"role": "user", "content": f"{user_text}\n[lang: {lang}]"})
         self._session_lang = lang
-        return self._call(fallback_lang=lang)
-
-    def note_seated(self, lang: str) -> HatTurn:
-        """The PIR fired: the visitor has sat down. Injected as the castle's
-        note rather than a role:system message -- history ends on an assistant
-        turn here, and mid-conversation system messages must follow a user
-        turn. This is the gate the ritual hangs on; no house is named before
-        the model sees it."""
-        self.messages.append({"role": "user", "content": SEATED_NOTE.format(lang=lang)})
         return self._call(fallback_lang=lang)
 
     def submit_tool_results(self, results: list[dict], lang: str) -> HatTurn:
@@ -111,7 +82,17 @@ class ConversationManager:
         return self._call(fallback_lang=lang)
 
     def reset(self) -> None:
+        """Forget the conversation. Called silently after a long enough gap
+        that whoever is there now is probably not who was there before --
+        never announced, because the hat does not say goodbye."""
         self.messages = []
+
+    def sorting_note(self, note: str) -> str:
+        """Dress sort_visitor's result with a private impression to riff on.
+        The persona's own "vary yourself" instruction is not reliable enough
+        at low effort against a near-identical prompt, and every sorting
+        looks near-identical from the inside."""
+        return f"{note} A private impression stirs in you as you look: {random.choice(SORTING_FLAVOR_HINTS)}."
 
     def _call(self, fallback_lang: str) -> HatTurn:
         fallback = HatTurn(beats=[FALLBACK_LINES.get(fallback_lang, FALLBACK_LINES["en"])])
@@ -178,23 +159,19 @@ class HatBrain:
             max_tokens=settings.max_reply_tokens,
         )
 
-    def start_ritual(self, lang: str | None = None, seated: bool = False) -> HatTurn:
-        lang = lang or self.settings.default_lang
-        return self._guard(lambda: self.conv.start_ritual(lang, seated), lang, "start the ritual")
-
     def reply(self, t: Transcript) -> HatTurn:
         return self._guard(lambda: self.conv.send(t.text, t.lang), t.lang, "get a reply")
-
-    def note_seated(self, lang: str) -> HatTurn:
-        return self._guard(lambda: self.conv.note_seated(lang), lang, "handle the seated note")
 
     def submit_tool_results(self, results: list[dict], lang: str) -> HatTurn:
         return self._guard(
             lambda: self.conv.submit_tool_results(results, lang), lang, "submit tool results"
         )
 
-    def end_session(self) -> None:
+    def forget(self) -> None:
         self.conv.reset()
+
+    def sorting_note(self, note: str) -> str:
+        return self.conv.sorting_note(note)
 
     def _guard(self, call, lang: str, what: str) -> HatTurn:
         try:

@@ -1,10 +1,14 @@
-"""The orchestrator: wake word -> vision -> Claude conversation -> speech.
+"""The orchestrator: motion sensor -> vision -> Claude conversation -> speech.
 
     python -m hat.main [--no-wake] [--no-vision] [--text] [--image path.jpg]
 
-Everything here is built against hat.audio.stub.FakeVoiceInput's interface
-(wait_for_wake / listen_once / hold) so it is a drop-in swap for the real
-hat.audio.listener.VoiceInput once that subsystem lands — see
+A visit has two physically distinct triggers, not one: a PIR motion sensor
+detects a visitor approaching (trigger A, see build_motion_sensor() below),
+and a second, still-undecided sensor will eventually detect the hat actually
+being placed on their head (trigger B, see wait_for_sort_trigger() -- still
+a manual placeholder). Voice input (listen_once) is built against
+hat.audio.stub.FakeVoiceInput's interface so it is a drop-in swap for the
+real hat.audio.listener.VoiceInput once that subsystem lands — see
 build_voice_input() below, which already tries the real thing first.
 """
 
@@ -19,6 +23,7 @@ from hat.audio.stub import FakeVoiceInput
 from hat.brain.client import HatBrain
 from hat.brain.persona import LOOKING_LINE, PARTING, SIT_LINE, STILL_THERE
 from hat.config import settings
+from hat.sensors.motion import ManualMotionSensor
 from hat.vision.camera import make_camera
 from hat.vision.describer import OllamaDescriber
 
@@ -94,12 +99,32 @@ def build_voice_input(args):
         return FakeVoiceInput()
 
 
+def build_motion_sensor(args):
+    """PIRMotionSensor under real (non---text) Pi runs, else
+    ManualMotionSensor -- same fallback shape as build_voice_input. This is
+    trigger A (a visitor approaching), distinct from wait_for_sort_trigger's
+    trigger B (the hat actually placed on their head)."""
+    if args.text:
+        return ManualMotionSensor()
+    try:
+        from hat.sensors.motion import PIRMotionSensor
+    except ImportError:
+        logger.warning("hat.sensors.motion.PIRMotionSensor not found; falling back to manual")
+        return ManualMotionSensor()
+    try:
+        return PIRMotionSensor(settings.motion_sensor_pin)
+    except Exception:
+        logger.warning("PIRMotionSensor() failed; falling back to manual", exc_info=True)
+        return ManualMotionSensor()
+
+
 def wait_for_sort_trigger() -> None:
     """Placeholder for a future 'hat placed on the visitor's head' sensor
-    (e.g. a tilt switch) -- a physically distinct moment from the wake
-    word/approach that starts the look-at-you step. Until that hardware
-    exists, both real-voice and --text runs share the same manual stand-in:
-    press Enter when the hat is ready to begin sorting."""
+    (e.g. a tilt switch) -- a physically distinct moment from trigger A
+    (the PIR motion sensor detecting someone approach). Still undecided
+    which sensor this will actually be; until that's built, both real-voice
+    and --text runs share the same manual stand-in: press Enter when the
+    hat is ready to begin sorting."""
     input("[press Enter: hat placed on head -- begin sorting] ")
 
 
@@ -154,23 +179,25 @@ def run(args) -> None:
     brain = HatBrain(settings)
     voice_input = build_voice_input(args)
     voice = build_voice()
+    motion = build_motion_sensor(args)
 
     lang = settings.default_lang
 
     try:
         while True:
-            voice_input.wait_for_wake()
+            motion.wait_for_motion()
 
             try:
-                # Everything from wake to the house proclamation is a single
-                # non-interactive performance: mic stays muted throughout
-                # (one hold() covers it, spanning both triggers below) so
-                # nothing said here is mistaken for the visitor answering.
-                # The visit ends automatically once the house is spoken --
-                # no open-ended listening loop by default (see
+                # Everything from the approach to the house proclamation is
+                # a single non-interactive performance: mic stays muted
+                # throughout (one hold() covers it, spanning both triggers
+                # below) so nothing said here is mistaken for the visitor
+                # answering. The visit ends automatically once the house is
+                # spoken -- no open-ended listening loop by default (see
                 # run_conversation()'s docstring).
                 with voice_input.hold():
-                    # Trigger A (wake word / approach): look at the visitor.
+                    # Trigger A (PIR motion sensor / approach): look at
+                    # the visitor.
                     voice.play_effect("wake_ack")
                     voice.speak(LOOKING_LINE[lang], lang)
 
@@ -179,12 +206,15 @@ def run(args) -> None:
                         jpeg = cam.capture_jpeg()
                         appearance = describer.describe(jpeg) if jpeg else None
 
+                    # Invite them to sit as soon as the description is
+                    # ready, then wait for confirmation they actually did.
+                    voice.speak(SIT_LINE[lang], lang)
+
                     # Trigger B (hat placed on head): begin sorting. A
                     # separate event from trigger A on purpose -- see
                     # wait_for_sort_trigger()'s docstring.
                     wait_for_sort_trigger()
 
-                    voice.speak(SIT_LINE[lang], lang)
                     for beat in brain.start_sorting(appearance, lang):
                         voice.speak(beat, lang)
             except Exception:
@@ -194,12 +224,14 @@ def run(args) -> None:
             finally:
                 brain.end_session()
     except (KeyboardInterrupt, EOFError):
-        # EOFError: stdin closed under --text/FakeVoiceInput (e.g. piped
-        # input ran out, or Ctrl-D at a wait_for_wake prompt) — a clean way
-        # to stop the whole program, not just one conversation.
+        # EOFError: stdin closed under --text/FakeVoiceInput or
+        # ManualMotionSensor (e.g. piped input ran out, or Ctrl-D at a
+        # wait_for_motion prompt) — a clean way to stop the whole program,
+        # not just one conversation.
         print()
     finally:
         voice.close()
+        motion.close()
         if cam:
             cam.close()
 
@@ -209,8 +241,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--no-wake",
         action="store_true",
-        help="(reserved for the real wake-word listener; FakeVoiceInput.wait_for_wake "
-        "is already a manual Enter-press trigger, so this is currently a no-op)",
+        help="(reserved -- currently a no-op; --text already gets you a manual "
+        "Enter-press trigger via ManualMotionSensor/FakeVoiceInput without this flag)",
     )
     parser.add_argument("--no-vision", action="store_true", help="skip the camera/describer entirely")
     parser.add_argument(

@@ -7,6 +7,12 @@
 adafruit-blinka>=8.0
 adafruit-circuitpython-pca9685>=3.4
 
+# PIR motion sensor (hat/sensors/motion.py:PIRMotionSensor). gpiozero, not
+# the older RPi.GPIO -- Pi 5 moved GPIO to a new RP1 southbridge chip that
+# RPi.GPIO does not support natively; gpiozero's lgpio pin factory does.
+gpiozero>=2.0
+lgpio>=0.2
+
 # picamera2 is deliberately NOT listed here: it has no PyPI wheel (apt-only,
 # needs --system-site-packages or the system Python), and hat/vision/camera.py
 # shells out to the rpicam-jpeg CLI instead -- already on the OS image, no

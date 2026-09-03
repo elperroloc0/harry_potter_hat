@@ -51,6 +51,7 @@ class Settings:
     tts_backend: Literal["elevenlabs", "say"]
     servo_backend: Literal["mock", "pca9685"]
     output_latency_s: float
+    audio_output_device: str | None
     stt_model_size: str
     wake_model: str
     wake_phrases: tuple[str, ...]
@@ -121,6 +122,10 @@ def load_settings() -> Settings:
         tts_backend=os.environ.get("HAT_TTS_BACKEND", "say"),  # type: ignore[arg-type]
         servo_backend=os.environ.get("HAT_SERVO_BACKEND", "mock"),  # type: ignore[arg-type]
         output_latency_s=float(os.environ.get("HAT_OUTPUT_LATENCY_S", "0.0")),
+        # Playback device name or index for sounddevice. Empty means "pick
+        # one" -- see hat.audio.player.default_output_device, which prefers
+        # PipeWire's "pulse" device over a raw ALSA card.
+        audio_output_device=os.environ.get("HAT_AUDIO_OUTPUT_DEVICE") or None,
         stt_model_size=os.environ.get("HAT_STT_MODEL", "small"),
         wake_model=os.environ.get("HAT_WAKE_MODEL", "hey_jarvis_v0.1"),
         wake_phrases=wake_phrases,

@@ -61,10 +61,29 @@ class OllamaDescriber:
                     "keep_alive": "30m",
                     # Default model (qwen2.5vl:7b) does not "think" -- no
                     # hidden reasoning pass, so num_predict only needs to
-                    # cover the actual 2-3 sentence reply. Measured live
-                    # against a real, deliberately hard photo (dim light,
-                    # out of focus, awkward angle): 1.7-2.1s, 40-60 tokens.
-                    # 300 leaves comfortable headroom. If VISION_MODEL is
+                    # cover the actual 2-3 sentence reply (40-60 tokens).
+                    # 300 leaves comfortable headroom.
+                    #
+                    # LATENCY, measured properly: ~9s per photo, of which
+                    # ~8.5s is image prefill (ollama ps confirms the model
+                    # stays resident, load_duration is zero, and a text-only
+                    # request to the same model answers in 0.2s). It does not
+                    # move with resolution -- 320x240 and 800x600 both cost
+                    # ~9.1s -- and no amount of warm-up helps, because the
+                    # cost is per-image, not per-model-load.
+                    #
+                    # An earlier note here claimed 1.7-2.1s. That was a
+                    # measurement artifact: re-describing the SAME jpeg bytes
+                    # returns in 0.1s because Ollama reuses the KV cache for
+                    # an identical prompt. Always benchmark with distinct
+                    # images, or you will measure the cache and not the model.
+                    #
+                    # llava:7b does the same job in ~2.9s (2.8s prefill) and
+                    # agrees on the easy calls, so it is the obvious lever if
+                    # nine seconds of silence mid-conversation proves too
+                    # long -- set VISION_MODEL=llava:7b. Its description
+                    # quality on an actual child has not been compared yet;
+                    # do that before switching the default. If VISION_MODEL is
                     # overridden to a thinking model (e.g. qwen3-vl, which
                     # was the original default -- see project memory for why
                     # it was dropped: 3-6x slower and no reliable way found

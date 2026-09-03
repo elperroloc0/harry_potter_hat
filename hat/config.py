@@ -87,6 +87,7 @@ class Settings:
     output_latency_s: float
     audio_output_device: str | None
     stt_model_size: str
+    stt_backend: str
     wake_model: str
     wake_phrases: tuple[str, ...]
     elevenlabs_voice_id: str
@@ -165,6 +166,9 @@ def load_settings() -> Settings:
         # PipeWire's "pulse" device over a raw ALSA card.
         audio_output_device=os.environ.get("HAT_AUDIO_OUTPUT_DEVICE") or None,
         stt_model_size=os.environ.get("HAT_STT_MODEL", "small"),
+        # scribe | whisper. Scribe is ~13x faster on this hardware (0.7s
+        # against 8.8s) and more accurate; whisper keeps the audio on the LAN.
+        stt_backend=os.environ.get("HAT_STT_BACKEND", "scribe"),
         wake_model=os.environ.get("HAT_WAKE_MODEL", "hey_jarvis_v0.1"),
         wake_phrases=wake_phrases,
         elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb"),

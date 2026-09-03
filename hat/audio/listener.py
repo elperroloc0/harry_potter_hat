@@ -23,7 +23,7 @@ from hat.audio.io import MicStream
 from hat.audio.types import Phrase, Utterance, WakeEvent
 from hat.audio.vad import EndOfPhraseDetector, PhraseState
 from hat.config import settings
-from hat.stt.whisper_stt import SpeechToText
+from hat.stt.elevenlabs_stt import make_stt
 from hat.wake.detector import WakeWordDetector
 
 __all__ = ["VoiceInput"]
@@ -49,7 +49,7 @@ class VoiceInput:
         mic: Optional[MicStream] = None,
         wake_detector: Optional[WakeWordDetector] = None,
         vad: Optional[EndOfPhraseDetector] = None,
-        stt: Optional[SpeechToText] = None,
+        stt=None,
         post_hold_refractory_s: float = 0.5,
         wake_phrases: Optional[tuple[str, ...]] = None,
     ) -> None:
@@ -84,7 +84,7 @@ class VoiceInput:
                 )
                 self.wake = None
         self.vad = vad if vad is not None else EndOfPhraseDetector()
-        self.stt = stt if stt is not None else SpeechToText()
+        self.stt = stt if stt is not None else make_stt()
         self.post_hold_refractory_s = post_hold_refractory_s
         self.wake_phrases = tuple(
             _normalize(p) for p in (settings.wake_phrases if wake_phrases is None else wake_phrases)

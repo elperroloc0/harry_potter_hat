@@ -122,8 +122,8 @@ class PCA9685Servos(ServoController):
 
         # Park in a known-good rest position immediately, before the
         # background thread (or anything else) touches the hardware.
-        self._write(cal.mouth_channel, self._mouth_angle)
-        self._write(cal.brow_channel, self._brow_angle)
+        self._write(cal.mouth, self._mouth_angle)
+        self._write(cal.brow, self._brow_angle)
 
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -147,12 +147,12 @@ class PCA9685Servos(ServoController):
             self._brow_angle = _step(
                 self._brow_angle, brow_target, self.cal.max_slew_deg_per_s, _TICK_S
             )
-            self._write(self.cal.mouth_channel, self._mouth_angle)
-            self._write(self.cal.brow_channel, self._brow_angle)
+            self._write(self.cal.mouth, self._mouth_angle)
+            self._write(self.cal.brow, self._brow_angle)
             time.sleep(_TICK_S)
 
-    def _write(self, channel: int, angle: float) -> None:
-        self.pca.channels[channel].duty_cycle = _angle_to_duty(angle, self.cal)
+    def _write(self, axis, angle: float) -> None:
+        self.pca.channels[axis.channel].duty_cycle = _angle_to_duty(angle, axis, self.cal.travel_deg)
 
     def close(self) -> None:
         self._stop.set()
@@ -164,8 +164,8 @@ class PCA9685Servos(ServoController):
         # run before this script had done anything; zeroing duty_cycle here
         # is what actually fixed it on the bench.
         try:
-            self.pca.channels[self.cal.mouth_channel].duty_cycle = 0
-            self.pca.channels[self.cal.brow_channel].duty_cycle = 0
+            self.pca.channels[self.cal.mouth.channel].duty_cycle = 0
+            self.pca.channels[self.cal.brow.channel].duty_cycle = 0
         except Exception:
             logger.exception("Failed to zero PCA9685 channels on close")
 
@@ -174,7 +174,7 @@ def _clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 
 
-def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
+def _angle_to_duty(angle: float, axis: "ServoAxis", travel_deg: float = 90.0) -> int:
     """Map a 0-180 degree command onto the horn's mechanical sweep: 0 is
     travel_deg below horizontal, 90 is horizontal, 180 is travel_deg above.
     Clamped twice on purpose -- to [0, 180] here, and to the electrical
@@ -186,12 +186,12 @@ def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
     # the two are not the same point, so the reach is whichever side is
     # nearer. Using the raw band instead is what threw the horn further one
     # way than the other.
-    centre = cal.centre_duty
-    reach = min(centre - cal.min_duty, cal.max_duty - centre)
-    duty = centre + ((angle - 90.0) / 90.0) * reach * (cal.travel_deg / 90.0)
+    centre = axis.centre_duty
+    reach = min(centre - axis.min_duty, axis.max_duty - centre)
+    duty = centre + ((angle - 90.0) / 90.0) * reach * (travel_deg / 90.0)
 
     # Backstop: whatever travel_deg says, never leave the tracking range.
-    duty = max(cal.min_duty, min(cal.max_duty, duty))
+    duty = max(axis.min_duty, min(axis.max_duty, duty))
     return int(duty * 65535)
 
 

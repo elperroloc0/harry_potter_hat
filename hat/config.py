@@ -10,51 +10,59 @@ Profile = Literal["mac", "pi"]
 
 
 @dataclass(frozen=True)
-class ServoCal:
-    """MG90S calibration for the PCA9685 rig, bench-tested by hand (see
-    hat/motion/servos.py:PCA9685Servos for the raw duty-cycle math). Only two
-    physical servos exist -- mouth and a single brow servo driving both
-    eyebrows together through one linkage -- on the channels below. Nothing
-    else in the codebase should need to change when these numbers do.
+class ServoAxis:
+    """One servo's own duty-cycle calibration, found by eye with
+    hat.tools.find_servo_range. Per servo and not shared, because the two
+    do not agree: horizontal is 9.00% on the mouth and 10.75% on the brows,
+    on otherwise identical hardware.
 
-    min_duty/max_duty is this servo's actual tracking range, found by eye
-    with hat.tools.find_servo_range and not derivable from the datasheet.
-    Two things make the nominal figures useless here. The horn's own zero
-    lands wherever the splines allow when it is pressed on, so the usable
-    band is not centred on the electrical 7.5%; measured, it runs 6.5% to
-    12.5%. And
-    past the band the servo does not hit a stop, it loses tracking and turns
-    in continuous full rotations, which is what made the hat unusable while
-    this was set to a nominal 1.5%-14%: the resting angle sat at min_duty,
-    so the horn was free-running even in silence.
+    centre_duty is horizontal, and it is measured rather than taken as the
+    midpoint of the band -- a horn is pressed onto splines and its zero
+    lands wherever the teeth allow, so the usable band is not centred on it.
+    That offset is what makes travel lopsided if ignored: the mouth has 2.5%
+    of duty below horizontal against 3.5% above, the brows 4.25% against
+    1.75%. Motion is therefore made symmetric about centre_duty, reaching
+    only as far as the nearer edge allows, which leaves part of the band
+    unused on the roomier side. Re-measure after re-seating a horn.
 
-    The 12.5% ceiling is where the measuring tool stops, not where the servo
-    does -- it still tracked there, while 14% free-ran, so there is a little
-    more room above if the mouth ever needs a wider throw.
-
-    centre_duty is horizontal, and it is measured, not the midpoint of the
-    band: 9.0% here against a midpoint of 9.5%. That gap is the whole reason
-    travel looked lopsided -- 2.5% of duty below horizontal against 3.5%
-    above, so sweeping the raw band threw the horn 40% further one way than
-    the other. Motion is therefore made symmetric about centre_duty and
-    limited by the narrower side, giving +/-2.5% (6.5% to 11.5%) and leaving
-    the top of the band unused. Re-measure with hat.tools.find_servo_range
-    after re-seating a horn; the spline teeth will land somewhere else.
-
-    rest_deg is where the horn parks: 90, i.e. centre_duty, so an idle servo
-    sits horizontal rather than against an end.
-
+    min_duty/max_duty is the band where the servo actually tracks. Past it
+    there is no mechanical stop -- it loses tracking and turns in continuous
+    full rotations, which is what made the hat unusable when these were set
+    to a nominal 1.5%-14% and the resting angle sat at min_duty, leaving the
+    horn free-running in silence. The 12.5% ceiling is where the measuring
+    tool stops, not where the servo does: it still tracked there while 14%
+    free-ran, so there is a little room above.
     """
 
-    mouth_channel: int = 15
-    brow_channel: int = 11
-    pca9685_freq_hz: int = 50
+    channel: int
+    centre_duty: float
     min_duty: float = 0.065
     max_duty: float = 0.125
-    centre_duty: float = 0.09
+
+
+@dataclass(frozen=True)
+class ServoCal:
+    """MG90S calibration for the PCA9685 rig, measured by hand (see
+    hat/motion/servos.py:PCA9685Servos for the raw duty-cycle math). Only two
+    physical servos exist -- mouth, and a single brow servo driving both
+    eyebrows together through one linkage.
+
+    rest_deg is where the horns park: 90, i.e. each axis's centre_duty, so an
+    idle servo sits horizontal rather than against an end.
+
+    travel_deg scales the sweep: 90 uses the full symmetric reach either side
+    of horizontal. The pushrods have roughly 45 degrees of clearance before
+    they would foul the servo body, but that is not the binding constraint --
+    these servos turn far less than commanded, moving the horn only about 15
+    degrees for a full sweep, so the clearance is never approached.
+    """
+
+    mouth: "ServoAxis" = field(default_factory=lambda: ServoAxis(channel=15, centre_duty=0.0900))
+    brow: "ServoAxis" = field(default_factory=lambda: ServoAxis(channel=11, centre_duty=0.1075))
+    pca9685_freq_hz: int = 50
+    max_slew_deg_per_s: float = 600.0
     rest_deg: float = 90.0
     travel_deg: float = 90.0
-    max_slew_deg_per_s: float = 600.0
 
 
 @dataclass(frozen=True)

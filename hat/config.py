@@ -37,11 +37,15 @@ class ServoCal:
     against an end.
 
     travel_deg is a SEPARATE, mechanical limit, and the one to tune. The
-    pushrods bolted to the horns would foul the servo body past 45 degrees
-    either side of horizontal, so that -- not the electrical window above --
-    is what set_mouth/set_brows actually sweep. min_duty/max_duty stay as
-    the hard backstop underneath it: widen travel_deg all you like, the
-    duty cycle still cannot leave the range where the servo tracks.
+    pushrods have about 45 degrees of clearance either side of horizontal
+    before they would foul the servo body -- but that is not the binding
+    constraint, because this servo turns far less than it is asked to: a
+    full +/-90 command moves the horn only about 15 degrees in total on the
+    bench, well inside the clearance. So this sits at 90, meaning "use the
+    whole electrical window", and the real limit on visible motion is the
+    servo itself. min_duty/max_duty remain the hard backstop underneath:
+    widen travel_deg all you like, the duty cycle still cannot leave the
+    range where the servo tracks.
     """
 
     mouth_channel: int = 15
@@ -50,7 +54,7 @@ class ServoCal:
     min_duty: float = 0.05
     max_duty: float = 0.10
     rest_deg: float = 90.0
-    travel_deg: float = 45.0
+    travel_deg: float = 90.0
     max_slew_deg_per_s: float = 600.0
 
 

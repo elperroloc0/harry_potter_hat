@@ -148,6 +148,11 @@ def wait_for_seated(motion, brain) -> str:
     drained first -- because the hat has only just asked them to sit. If
     nobody ever does, the ceremony lapses quietly and the conversation
     carries on; the hat is not going anywhere."""
+    if not settings.use_motion_sensor:
+        # No chair sensor in play: take their word for it and get on with
+        # the ceremony rather than stalling on hardware that is not trusted.
+        return brain.sorting_note(SEATED_NOTE)
+
     motion.poll()
     deadline = time.monotonic() + settings.seat_timeout_s
     while time.monotonic() < deadline:
@@ -246,7 +251,10 @@ def run(args) -> None:
     # Enter can only stand in for the PIR if the voice side isn't also
     # reading stdin (i.e. it got a real microphone, not the stub).
     motion = build_motion_sensor(args, stdin_free=not isinstance(voice_input, FakeVoiceInput))
-    motion.start_watching()
+    if args.no_motion:
+        settings.use_motion_sensor = False
+    if settings.use_motion_sensor:
+        motion.start_watching()
 
     lang = settings.default_lang
 
@@ -273,6 +281,11 @@ def main(argv: list[str] | None = None) -> None:
         "Enter-press trigger via FakeVoiceInput without this flag)",
     )
     parser.add_argument("--no-vision", action="store_true", help="skip the camera/describer entirely")
+    parser.add_argument(
+        "--no-motion",
+        action="store_true",
+        help="ignore the PIR sensor; sorting proceeds without waiting for the chair",
+    )
     parser.add_argument(
         "--text",
         action="store_true",

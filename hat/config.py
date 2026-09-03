@@ -65,7 +65,7 @@ class ServoCal:
     travel_deg: float = 90.0
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     anthropic_api_key: str
     elevenlabs_api_key: str
@@ -79,6 +79,8 @@ class Settings:
     motion_sensor_pin: int
     vision_timeout_s: float
     listen_timeout_s: float
+    silence_end_s: float
+    use_motion_sensor: bool
     session_max_s: float
     seat_timeout_s: float
     max_reply_tokens: int
@@ -152,6 +154,14 @@ def load_settings() -> Settings:
         # project_hat_hardware_status memory for the full comparison.
         vision_timeout_s=float(os.environ.get("VISION_TIMEOUT_S", "20.0")),
         listen_timeout_s=float(os.environ.get("LISTEN_TIMEOUT_S", "8.0")),
+        # How much silence ends a phrase. 0.8s cut children off mid-thought:
+        # they pause to think in the middle of an answer, and the hat took
+        # the pause for the end of it.
+        silence_end_s=float(os.environ.get("SILENCE_END_S", "1.6")),
+        # The PIR is easily set off by anything moving nearby, and a false
+        # trigger ends the sorting early. Off means sort_visitor does not
+        # wait on the chair at all.
+        use_motion_sensor=os.environ.get("HAT_USE_MOTION", "1").lower() not in ("0", "false", "no"),
         # How long sort_visitor waits for the chair before giving up. Long
         # enough for a hesitant child to be coaxed into it, short enough that
         # a wandered-off one does not strand the ceremony.

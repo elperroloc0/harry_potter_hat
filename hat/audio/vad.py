@@ -17,6 +17,7 @@ from typing import Optional, Protocol
 
 import numpy as np
 
+from hat.config import settings
 from hat.audio.types import FRAME_SAMPLES, SAMPLE_RATE, Phrase
 
 __all__ = ["PhraseState", "EndOfPhraseDetector"]
@@ -59,7 +60,7 @@ class EndOfPhraseDetector:
         self,
         start_threshold: float = 0.5,
         end_threshold: float = 0.35,
-        silence_end_s: float = 0.8,
+        silence_end_s: float = settings.silence_end_s,
         max_phrase_s: float = 12.0,
         pre_roll_s: float = 0.5,
         min_speech_chunks: int = 2,

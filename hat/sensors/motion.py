@@ -153,7 +153,7 @@ class PIRMotionSensor(_EventSensor):
         self._sensor.when_motion = self._on_motion
 
     def _on_motion(self) -> None:
-        logger.info("PIR fired: visitor seated")
+        logger.debug("PIR fired")
         self._event.set()
 
     def close(self) -> None:

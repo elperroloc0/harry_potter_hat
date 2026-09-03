@@ -74,6 +74,23 @@ class SpeechToText:
         winner = max(allowed, key=allowed.get)
         return winner, allowed[winner]
 
+    def transcribe_any(self, phrase: Phrase) -> str:
+        """Fast, unconstrained transcription used only for wake-phrase
+        matching. Deliberately skips the allowed-language filtering that
+        transcribe() does: the hat answers to a Russian name as readily as a
+        Spanish one, even though the ritual itself only speaks es/en. Greedy
+        decoding (beam_size=1) because this runs on every utterance the hat
+        overhears while idle, and only needs to be right about one word."""
+        audio = phrase.pcm.astype(np.float32) / 32768.0
+        segments, _info = self._model.transcribe(
+            audio,
+            beam_size=1,
+            without_timestamps=True,
+            condition_on_previous_text=False,
+            vad_filter=False,  # already VAD-trimmed upstream
+        )
+        return " ".join(seg.text.strip() for seg in segments).strip()
+
     def transcribe(self, phrase: Phrase) -> Transcript:
         audio = phrase.pcm.astype(np.float32) / 32768.0
 

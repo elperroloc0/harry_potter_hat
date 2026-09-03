@@ -53,6 +53,7 @@ class Settings:
     output_latency_s: float
     stt_model_size: str
     wake_model: str
+    wake_phrases: tuple[str, ...]
     elevenlabs_voice_id: str
     elevenlabs_model_id: str
     elevenlabs_stability: float
@@ -74,6 +75,20 @@ def load_settings() -> Settings:
 
     languages = tuple(
         lang.strip() for lang in os.environ.get("LANGUAGES", "es,en").split(",") if lang.strip()
+    )
+
+    # Spoken names the hat answers to when the openwakeword stack is absent
+    # (it has no aarch64 wheel, so on the Pi it always is -- see
+    # hat.audio.listener). Matched against a quick unconstrained Whisper pass,
+    # so they can be in any language, unlike the ritual itself. The Latin
+    # spellings of the Russian name are insurance for when Whisper hears it
+    # in a Spanish or English context and writes it out phonetically.
+    wake_phrases = tuple(
+        phrase.strip().lower()
+        for phrase in os.environ.get(
+            "HAT_WAKE_PHRASES", "шляпа,shlyapa,shliapa,sombrero,sorting hat"
+        ).split(",")
+        if phrase.strip()
     )
 
     return Settings(
@@ -108,6 +123,7 @@ def load_settings() -> Settings:
         output_latency_s=float(os.environ.get("HAT_OUTPUT_LATENCY_S", "0.0")),
         stt_model_size=os.environ.get("HAT_STT_MODEL", "small"),
         wake_model=os.environ.get("HAT_WAKE_MODEL", "hey_jarvis_v0.1"),
+        wake_phrases=wake_phrases,
         elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb"),
         # Voice-character knobs -- tune by ear, no code changes needed.
         # stability: lower = more expressive but prone to wavering/glitches

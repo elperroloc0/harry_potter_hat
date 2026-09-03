@@ -27,15 +27,13 @@ from hat.brain.persona import (
 # --------------------------------------------------------------------------
 
 
-def test_system_prompt_is_nonempty_and_has_key_markers():
+def test_system_prompt_is_spanish_and_says_nothing_it_need_not():
     assert isinstance(SYSTEM_PROMPT, str)
-    assert len(SYSTEM_PROMPT) > 500
-    assert "Sorting Hat" in SYSTEM_PROMPT
-    assert "[lang:" in SYSTEM_PROMPT
-    assert "Gryffindor" in SYSTEM_PROMPT
-    assert "Hufflepuff" in SYSTEM_PROMPT
-    assert "Ravenclaw" in SYSTEM_PROMPT
-    assert "Slytherin" in SYSTEM_PROMPT
+    # No house list, no register notes, no choreography: the model knows the
+    # books, and everything it can work out for itself was taken back out.
+    for inferable in ("Gryffindor", "Hufflepuff", "Ravenclaw", "Slytherin"):
+        assert inferable not in SYSTEM_PROMPT
+    assert "Sorting Hat" not in SYSTEM_PROMPT  # it is addressed in Spanish
 
 
 def test_tools_are_parameterless():
@@ -44,14 +42,8 @@ def test_tools_are_parameterless():
         assert tool["input_schema"] == {"type": "object", "properties": {}, "required": []}
 
 
-def test_fallback_lines_cover_both_languages():
-    assert set(FALLBACK_LINES.keys()) >= {"es", "en"}
-    for lang in ("es", "en"):
-        assert FALLBACK_LINES[lang].strip()
-
-
-def test_fallback_lines_differ_by_language():
-    assert FALLBACK_LINES["es"] != FALLBACK_LINES["en"]
+def test_fallback_line_exists_for_the_hats_language():
+    assert FALLBACK_LINES["es"].strip()
 
 
 def test_no_sight_result_is_in_character_not_an_error():
@@ -164,11 +156,14 @@ def test_tools_are_conversation_shaped():
     assert "end_session" not in SYSTEM_PROMPT
 
 
-def test_prompt_forbids_stock_farewells_and_silence_filler():
-    # The behaviour these replace (STILL_THERE / PARTING on a timer) is what
-    # made the prop talk to an empty room.
-    assert "fall quiet" in SYSTEM_PROMPT
-    assert "sort_visitor" in SYSTEM_PROMPT
+def test_prompt_is_minimal_and_covers_only_what_cannot_be_inferred():
+    # Deliberately short: character plus the three things the model cannot
+    # work out for itself -- language, that it is spoken aloud, and what its
+    # tools do. Behaviour is left to the model.
+    assert len(SYSTEM_PROMPT) < 2500
+    assert "Sombrero Seleccionador" in SYSTEM_PROMPT
+    assert "take_photo" in SYSTEM_PROMPT and "sort_visitor" in SYSTEM_PROMPT
+    assert "español" in SYSTEM_PROMPT
 
 
 def test_sorting_notes_are_instructions_not_speech():
@@ -182,10 +177,10 @@ def test_sorting_notes_are_instructions_not_speech():
 def test_conversation_starts_from_what_was_heard():
     conv, _ = _conv(_FakeResponse(_FakeTextBlock("And who are you, then?")))
 
-    turn = conv.send("hello hat", "en")
+    turn = conv.send("hello hat", "es")
 
     # No seeded opening: the first thing in history is the visitor speaking.
-    assert conv.messages[0] == {"role": "user", "content": "hello hat\n[lang: en]"}
+    assert conv.messages[0] == {"role": "user", "content": "hello hat\n[lang: es]"}
     assert turn.beats == ["And who are you, then?"]
 
 
@@ -195,11 +190,11 @@ def test_sort_visitor_round_trip_keeps_tool_blocks():
         _FakeResponse(_FakeTextBlock("Sit, then."), tool, stop_reason="tool_use"),
         _FakeResponse(_FakeTextBlock("Difficult..."), _FakeTextBlock("RAVENCLAW!")),
     )
-    turn = conv.send("sort me", "en")
+    turn = conv.send("sort me", "es")
     assert turn.wants("sort_visitor")
 
     results = [{"type": "tool_result", "tool_use_id": tool.id, "content": SEATED_NOTE}]
-    verdict = conv.submit_tool_results(results, "en")
+    verdict = conv.submit_tool_results(results, "es")
 
     # The assistant turn keeps its tool_use block verbatim -- that is what
     # lets the result be paired back to it on the next request.
@@ -222,7 +217,7 @@ def test_sorting_notes_vary_across_sortings():
 
 def test_reset_forgets_everything():
     conv, _ = _conv(_FakeResponse(_FakeTextBlock("hi")))
-    conv.send("hello", "en")
+    conv.send("hello", "es")
     assert conv.turns > 0
 
     conv.reset()

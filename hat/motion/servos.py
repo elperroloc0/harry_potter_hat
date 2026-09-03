@@ -175,13 +175,22 @@ def _clamp01(v: float) -> float:
 
 
 def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
-    """Map a 0-180 degree servo angle onto the +/-90-degree window around
-    horizontal: 0 -> min_duty (-90), 90 -> horizontal, 180 -> max_duty (+90).
-    Clamping to [0, 180] is a hard limit, not a suggestion -- past the window
-    the servo does not hit a mechanical stop, it loses tracking and free-runs
-    (see ServoCal)."""
+    """Map a 0-180 degree command onto the horn's mechanical sweep: 0 is
+    travel_deg below horizontal, 90 is horizontal, 180 is travel_deg above.
+    Clamped twice on purpose -- to [0, 180] here, and to the electrical
+    window in ServoCal -- because past that window the servo does not hit a
+    stop, it loses tracking and free-runs."""
     angle = max(0.0, min(180.0, angle))
-    duty = cal.min_duty + (angle / 180.0) * (cal.max_duty - cal.min_duty)
+
+    # The electrical window is +/-90 degrees wide (min_duty..max_duty), but
+    # the horns only get travel_deg either side of horizontal before the
+    # pushrods hit the servo body, so scale into that sub-range first.
+    centre = 0.5 * (cal.min_duty + cal.max_duty)
+    half_span = 0.5 * (cal.max_duty - cal.min_duty) * (cal.travel_deg / 90.0)
+    duty = centre + ((angle - 90.0) / 90.0) * half_span
+
+    # Backstop: whatever travel_deg says, never leave the tracking range.
+    duty = max(cal.min_duty, min(cal.max_duty, duty))
     return int(duty * 65535)
 
 

@@ -35,6 +35,13 @@ class ServoCal:
     rest_deg is where the horn parks: 90, horizontal, the centre of the
     window, so an idle servo sits in the middle of its travel rather than
     against an end.
+
+    travel_deg is a SEPARATE, mechanical limit, and the one to tune. The
+    pushrods bolted to the horns would foul the servo body past 45 degrees
+    either side of horizontal, so that -- not the electrical window above --
+    is what set_mouth/set_brows actually sweep. min_duty/max_duty stay as
+    the hard backstop underneath it: widen travel_deg all you like, the
+    duty cycle still cannot leave the range where the servo tracks.
     """
 
     mouth_channel: int = 15
@@ -43,6 +50,7 @@ class ServoCal:
     min_duty: float = 0.05
     max_duty: float = 0.10
     rest_deg: float = 90.0
+    travel_deg: float = 45.0
     max_slew_deg_per_s: float = 600.0
 
 

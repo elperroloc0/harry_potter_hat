@@ -135,6 +135,7 @@ class RpicamJpegCamera:
         width: int = 800,
         height: int = 600,
         timeout_s: float = 15.0,
+        settle_ms: int = 500,
     ) -> None:
         # 800x600 (down from the sensor's native 2592x1944) is the
         # bench-chosen resolution -- plenty for "describe the person",
@@ -142,6 +143,16 @@ class RpicamJpegCamera:
         self.width = width
         self.height = height
         self.timeout_s = timeout_s
+        # rpicam-jpeg's own default is -t 5000: five seconds of AGC settling
+        # before it takes the shot. That is five seconds of dead silence in
+        # the middle of a conversation with a child, so it is cut right down.
+        # Measured on this rig across 200/500/1000/2000/5000ms: exposure is
+        # already correct at 200ms (mean brightness 100.8 vs 102.6 at the
+        # default, contrast flat), and only fine detail keeps improving up to
+        # about 1000ms. 500ms costs 0.87s instead of 5.30s and leaves margin
+        # for dimmer light than the room this was measured in -- raise it if
+        # the party turns out to be darker.
+        self.settle_ms = settle_ms
 
     def capture_jpeg(self) -> bytes | None:
         fd, path = tempfile.mkstemp(suffix=".jpg")
@@ -154,6 +165,7 @@ class RpicamJpegCamera:
                     "--width", str(self.width),
                     "--height", str(self.height),
                     "--nopreview",
+                    "-t", str(self.settle_ms),
                 ],
                 capture_output=True,
                 timeout=self.timeout_s,

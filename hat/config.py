@@ -17,42 +17,31 @@ class ServoCal:
     eyebrows together through one linkage -- on the channels below. Nothing
     else in the codebase should need to change when these numbers do.
 
-    min_duty/max_duty is the +/-90-degree window either side of horizontal,
-    and it is a hard mechanical limit: 5% is -90 degrees, 7.5% is horizontal,
-    10% is +90 degrees, which is the standard 1.0/1.5/2.0 ms pulse triple at
-    50 Hz.
+    min_duty/max_duty is this servo's actual tracking range, found by eye
+    with hat.tools.find_servo_range and not derivable from the datasheet.
+    Two things make the nominal figures useless here. The horn's own zero
+    lands wherever the splines allow when it is pressed on, so the usable
+    band is not centred on the electrical 7.5%; measured, it runs 6.5% to
+    12.5%, whose midpoint -- 9.5% -- is what horizontal actually is. And
+    past the band the servo does not hit a stop, it loses tracking and turns
+    in continuous full rotations, which is what made the hat unusable while
+    this was set to a nominal 1.5%-14%: the resting angle sat at min_duty,
+    so the horn was free-running even in silence.
 
-    These were 1.5%-14% before, described as "bench-confirmed safe". Live on
-    the rig that turned out to be false and is what made the servos useless:
-    at 1.5% and at 14% this servo loses tracking and spins in continuous full
-    rotations, first one way then the other, while 5%, 7.5% and 10% each hold
-    position solidly. Since the resting angle was 0 -- i.e. min_duty -- the
-    horn was spinning even with the hat silent, and speech swept it between
-    two out-of-range endpoints ten times a second. Do not widen this back out
-    without re-testing on the actual servo: past these limits it does not hit
-    a stop, it free-runs.
+    The 12.5% ceiling is where the measuring tool stops, not where the servo
+    does -- it still tracked there, while 14% free-ran, so there is a little
+    more room above if the mouth ever needs a wider throw.
 
-    rest_deg is where the horn parks: 90, horizontal, the centre of the
-    window, so an idle servo sits in the middle of its travel rather than
-    against an end.
+    rest_deg is where the horn parks: 90, the middle of the band, so an idle
+    servo sits mid-travel rather than against an end.
 
-    travel_deg is a SEPARATE, mechanical limit, and the one to tune. The
-    pushrods have about 45 degrees of clearance either side of horizontal
-    before they would foul the servo body -- but that is not the binding
-    constraint, because this servo turns far less than it is asked to: a
-    full +/-90 command moves the horn only about 15 degrees in total on the
-    bench, well inside the clearance. So this sits at 90, meaning "use the
-    whole electrical window", and the real limit on visible motion is the
-    servo itself. min_duty/max_duty remain the hard backstop underneath:
-    widen travel_deg all you like, the duty cycle still cannot leave the
-    range where the servo tracks.
     """
 
     mouth_channel: int = 15
     brow_channel: int = 11
     pca9685_freq_hz: int = 50
-    min_duty: float = 0.05
-    max_duty: float = 0.10
+    min_duty: float = 0.065
+    max_duty: float = 0.125
     rest_deg: float = 90.0
     travel_deg: float = 90.0
     max_slew_deg_per_s: float = 600.0

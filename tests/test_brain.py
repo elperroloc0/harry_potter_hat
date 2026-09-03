@@ -1,31 +1,33 @@
 """Pure-logic tests for the brain/orchestrator subsystem — no network calls.
 
-Covers: persona template formatting, fallback-line completeness, farewell
-detection, and ConversationManager's message-building logic against a fake
-Anthropic client (so no live API key is required to validate the request
-shape sent to Claude).
+Covers: persona templates and the tool definitions, beat splitting, and
+ConversationManager's message-building logic through a full tool-use round
+trip against a fake Anthropic client (so no live API key is required to
+validate the request shape sent to Claude).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from hat.brain.client import ConversationManager
+from hat.brain.client import ConversationManager, HatTurn
 from hat.brain.persona import (
     FALLBACK_LINES,
-    LOOKING_LINE,
+    NO_SIGHT_RESULT,
+    OPENING_MANNERS,
     PARTING,
-    SIT_LINE,
-    SORTING_SEED_NO_APPEARANCE,
-    SORTING_SEED_WITH_APPEARANCE,
+    RITUAL_OPENING_SEED,
+    RITUAL_OPENING_SEED_SEATED,
+    SEATED_NOTE,
     STILL_THERE,
     SYSTEM_PROMPT,
+    TOOLS,
+    split_beats,
 )
-from hat.main import FAREWELL_RE, is_farewell
 
 
 # --------------------------------------------------------------------------
-# persona.py — templates and constants
+# persona.py — prompt, templates, tools
 # --------------------------------------------------------------------------
 
 
@@ -40,20 +42,49 @@ def test_system_prompt_is_nonempty_and_has_key_markers():
     assert "Slytherin" in SYSTEM_PROMPT
 
 
-def test_sorting_seed_with_appearance_formats():
-    out = SORTING_SEED_WITH_APPEARANCE.format(description="a boy in a blue scarf.", lang="en")
-    assert "a boy in a blue scarf." in out
-    assert "[lang: en]" in out
-    assert "Castle's note" in out
+def test_system_prompt_documents_both_tools_and_the_seated_gate():
+    assert "take_photo" in SYSTEM_PROMPT
+    assert "end_session" in SYSTEM_PROMPT
+    # The gate the whole ritual hangs on: no house before the castle says
+    # they have sat down.
+    assert "sat down" in SYSTEM_PROMPT
 
 
-def test_sorting_seed_no_appearance_formats():
-    out = SORTING_SEED_NO_APPEARANCE.format(lang="es")
-    assert "[lang: es]" in out
-    assert "perceive nothing" in out
+def test_tools_are_parameterless_and_named():
+    assert [t["name"] for t in TOOLS] == ["take_photo", "end_session"]
+    for tool in TOOLS:
+        assert tool["description"].strip()
+        assert tool["input_schema"] == {"type": "object", "properties": {}, "required": []}
 
 
-@pytest.mark.parametrize("mapping", [FALLBACK_LINES, STILL_THERE, PARTING, LOOKING_LINE, SIT_LINE])
+def test_opening_seeds_format_and_differ():
+    standing = RITUAL_OPENING_SEED.format(lang="en")
+    seated = RITUAL_OPENING_SEED_SEATED.format(lang="en")
+    assert "[lang: en]" in standing
+    assert "[lang: en]" in seated
+    assert "Castle's note" in standing
+    assert standing != seated
+    # The seated opening must tell the hat not to try looking at them.
+    assert "do not ask to look" in seated
+
+
+def test_opening_manners_are_usable_hints():
+    assert len(OPENING_MANNERS) >= 8
+    assert len(set(OPENING_MANNERS)) == len(OPENING_MANNERS)
+    for manner in OPENING_MANNERS:
+        # Folded into the seed as "Open {manner}", so they must read as a
+        # manner to improvise from, not a line to recite.
+        assert manner.strip() == manner and manner.strip()
+        assert not manner.endswith(".")
+
+
+def test_seated_note_formats():
+    note = SEATED_NOTE.format(lang="es")
+    assert "[lang: es]" in note
+    assert "sat down" in note
+
+
+@pytest.mark.parametrize("mapping", [FALLBACK_LINES, STILL_THERE, PARTING])
 def test_bilingual_maps_have_both_languages(mapping):
     assert set(mapping.keys()) >= {"es", "en"}
     for lang in ("es", "en"):
@@ -65,57 +96,37 @@ def test_fallback_lines_differ_by_language():
     assert FALLBACK_LINES["es"] != FALLBACK_LINES["en"]
 
 
-# --------------------------------------------------------------------------
-# hat.main — farewell detection
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "adios",
-        "adiós",
-        "Adiós, sombrero",
-        "bueno, me voy ya",
-        "hasta luego",
-        "chao chao",
-        "buenas noches a todos",
-        "goodbye",
-        "Goodbye!",
-        "ok bye",
-        "see you later",
-        "farewell, old hat",
-        "good night",
-    ],
-)
-def test_farewell_matches(text):
-    assert is_farewell(text) is True
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "sort me please",
-        "distribúyeme",
-        "cual es mi casa",
-        "me gusta el quidditch",
-        "I would help my friends",
-        "cuéntame sobre Hogwarts",
-        "",
-        "hello there",
-    ],
-)
-def test_farewell_does_not_false_positive(text):
-    assert is_farewell(text) is False
-
-
-def test_farewell_re_is_case_insensitive():
-    assert FAREWELL_RE.search("GOODBYE") is not None
-    assert FAREWELL_RE.search("ADIÓS") is not None
+def test_no_sight_result_is_in_character_not_an_error():
+    assert NO_SIGHT_RESULT.strip()
+    assert "error" not in NO_SIGHT_RESULT.lower()
 
 
 # --------------------------------------------------------------------------
-# ConversationManager — message-shape logic against a fake client
+# split_beats
+# --------------------------------------------------------------------------
+
+
+def test_split_beats_splits_lines():
+    text = "Plenty of courage, I see...\nDifficult... very difficult...\nGRYFFINDOR!"
+    assert split_beats(text) == [
+        "Plenty of courage, I see...",
+        "Difficult... very difficult...",
+        "GRYFFINDOR!",
+    ]
+
+
+def test_split_beats_drops_blank_lines():
+    assert split_beats("Hmm...\n\nSLYTHERIN!\n") == ["Hmm...", "SLYTHERIN!"]
+
+
+def test_split_beats_single_line_and_empty():
+    assert split_beats("RAVENCLAW!") == ["RAVENCLAW!"]
+    assert split_beats("") == []
+    assert split_beats("   ") == []
+
+
+# --------------------------------------------------------------------------
+# Fakes
 # --------------------------------------------------------------------------
 
 
@@ -126,9 +137,18 @@ class _FakeTextBlock:
         self.text = text
 
 
+class _FakeToolUseBlock:
+    type = "tool_use"
+
+    def __init__(self, name, id="toolu_1", input=None):
+        self.name = name
+        self.id = id
+        self.input = input or {}
+
+
 class _FakeResponse:
-    def __init__(self, text, stop_reason="end_turn"):
-        self.content = [_FakeTextBlock(text)]
+    def __init__(self, *blocks, stop_reason="end_turn"):
+        self.content = list(blocks)
         self.stop_reason = stop_reason
         self.usage = None
 
@@ -150,60 +170,168 @@ class _FakeClient:
         self.messages = _FakeMessages(responses)
 
 
-def test_start_session_seeds_single_user_turn_with_appearance():
-    client = _FakeClient([_FakeResponse("Ah, promising indeed.")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+def _conv(*responses, max_tokens=100):
+    client = _FakeClient(list(responses) or [_FakeResponse(_FakeTextBlock("Hmm..."))])
+    return ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=max_tokens), client
 
-    conv.start_session("a boy in a red jumper", "en")
 
-    assert len(conv.messages) == 1
+# --------------------------------------------------------------------------
+# HatTurn
+# --------------------------------------------------------------------------
+
+
+def test_hat_turn_wants():
+    turn = HatTurn(beats=["Hmm..."], tool_uses=[_FakeToolUseBlock("take_photo")])
+    assert turn.wants("take_photo") is True
+    assert turn.wants("end_session") is False
+    assert HatTurn().wants("take_photo") is False
+
+
+# --------------------------------------------------------------------------
+# ConversationManager
+# --------------------------------------------------------------------------
+
+
+def test_start_ritual_seeds_one_user_turn_with_flavor_hint():
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("And who might you be?")))
+
+    turn = conv.start_ritual("en")
+
+    assert turn.beats == ["And who might you be?"]
     assert conv.messages[0]["role"] == "user"
-    assert "a boy in a red jumper" in conv.messages[0]["content"]
     assert "[lang: en]" in conv.messages[0]["content"]
+    assert "private impression stirs in you" in conv.messages[0]["content"]
 
 
-def test_start_session_seeds_no_appearance_variant():
-    client = _FakeClient([_FakeResponse("Welcome, traveler.")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+def test_start_ritual_folds_in_an_opening_manner():
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("Your name?")))
 
-    conv.start_session(None, "es")
+    conv.start_ritual("en")
 
-    assert len(conv.messages) == 1
-    assert "perceive nothing" in conv.messages[0]["content"]
-    assert "[lang: es]" in conv.messages[0]["content"]
-
-
-def test_send_seed_appends_assistant_turn_and_returns_text():
-    client = _FakeClient([_FakeResponse("Ah, promising indeed.")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-    conv.start_session("a red scarf", "en")
-
-    greeting = conv.send_seed()
-
-    assert greeting == "Ah, promising indeed."
-    assert conv.turns == 2
-    assert conv.messages[1] == {"role": "assistant", "content": "Ah, promising indeed."}
+    seed = conv.messages[0]["content"]
+    assert "Open " in seed
+    assert any(manner in seed for manner in OPENING_MANNERS)
 
 
-def test_send_appends_user_then_assistant_with_lang_tag():
-    client = _FakeClient([_FakeResponse("Greetings."), _FakeResponse("Difficult... very difficult.")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-    conv.start_session(None, "en")
-    conv.send_seed()
+def test_opening_manner_varies_across_visits():
+    # Live runs converged on one greeting for every child until the manner
+    # was drawn per visit; children queue up and hear each other.
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("Your name?")))
 
-    reply = conv.send("sort me please", "en")
+    seeds = set()
+    for _ in range(20):
+        conv.start_ritual("en")
+        seeds.add(conv.messages[0]["content"])
 
-    assert reply == "Difficult... very difficult."
-    assert conv.messages[-2] == {"role": "user", "content": "sort me please\n[lang: en]"}
-    assert conv.messages[-1] == {"role": "assistant", "content": "Difficult... very difficult."}
+    assert len(seeds) > 1
+
+
+def test_start_ritual_seated_uses_the_seated_opening():
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("Settled already, I see...")))
+
+    conv.start_ritual("en", seated=True)
+
+    assert "do not ask to look" in conv.messages[0]["content"]
+
+
+def test_start_ritual_hints_vary_across_calls():
+    # Not guaranteed on any single pair, but with 14 hints, 20 draws should
+    # not all land on the same one.
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("Hmm...")))
+
+    seeds = {conv.start_ritual("en") and conv.messages[0]["content"] for _ in range(20)}
+
+    assert len(seeds) > 1
+
+
+def test_assistant_turn_is_stored_as_content_blocks_not_text():
+    # This is what keeps tool_use (and thinking) blocks alive for the next
+    # request; storing extracted text would silently break the tool loop.
+    text_block = _FakeTextBlock("Let me have a proper look at you...")
+    tool_block = _FakeToolUseBlock("take_photo")
+    conv, _ = _conv(_FakeResponse(text_block, tool_block, stop_reason="tool_use"))
+
+    turn = conv.start_ritual("en")
+
+    assert conv.messages[-1]["role"] == "assistant"
+    assert conv.messages[-1]["content"] == [text_block, tool_block]
+    assert turn.beats == ["Let me have a proper look at you..."]
+    assert turn.tool_uses == [tool_block]
+
+
+def test_full_take_photo_round_trip():
+    conv, client = _conv(
+        _FakeResponse(_FakeTextBlock("Let me look at you..."), _FakeToolUseBlock("take_photo"), stop_reason="tool_use"),
+        _FakeResponse(_FakeTextBlock("Ah... a scarlet jumper. Promising.")),
+    )
+    turn = conv.start_ritual("en")
+
+    results = [{"type": "tool_result", "tool_use_id": turn.tool_uses[0].id, "content": "a boy in a red jumper"}]
+    followup = conv.submit_tool_results(results, "en")
+
+    assert followup.beats == ["Ah... a scarlet jumper. Promising."]
+    assert conv.messages[-2] == {"role": "user", "content": results}
+    assert conv.messages[-1]["role"] == "assistant"
+    # seed, assistant(tool_use), tool_result, assistant
     assert conv.turns == 4
 
 
+def test_send_appends_user_then_assistant_with_lang_tag():
+    conv, _ = _conv(
+        _FakeResponse(_FakeTextBlock("Greetings.")),
+        _FakeResponse(_FakeTextBlock("Difficult... very difficult.")),
+    )
+    conv.start_ritual("en")
+
+    turn = conv.send("my name is Sam", "en")
+
+    assert turn.beats == ["Difficult... very difficult."]
+    assert conv.messages[-2] == {"role": "user", "content": "my name is Sam\n[lang: en]"}
+    assert conv.turns == 4
+
+
+def test_note_seated_injects_the_castle_note():
+    conv, _ = _conv(
+        _FakeResponse(_FakeTextBlock("Hmm...")),
+        _FakeResponse(_FakeTextBlock("GRYFFINDOR!")),
+    )
+    conv.start_ritual("es")
+
+    turn = conv.note_seated("es")
+
+    assert turn.beats == ["GRYFFINDOR!"]
+    assert conv.messages[-2]["role"] == "user"
+    assert "sat down" in conv.messages[-2]["content"]
+    assert "[lang: es]" in conv.messages[-2]["content"]
+
+
+def test_end_session_tool_is_surfaced_on_the_turn():
+    conv, _ = _conv(
+        _FakeResponse(
+            _FakeTextBlock("Off you go. Who is next?"),
+            _FakeToolUseBlock("end_session", id="toolu_end"),
+            stop_reason="tool_use",
+        )
+    )
+
+    turn = conv.start_ritual("en")
+
+    assert turn.wants("end_session")
+    assert turn.beats == ["Off you go. Who is next?"]
+
+
+def test_tool_only_turn_has_no_beats():
+    conv, _ = _conv(_FakeResponse(_FakeToolUseBlock("take_photo"), stop_reason="tool_use"))
+
+    turn = conv.start_ritual("en")
+
+    assert turn.beats == []
+    assert turn.wants("take_photo")
+
+
 def test_call_uses_expected_request_shape():
-    client = _FakeClient([_FakeResponse("hello")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=250)
-    conv.start_session(None, "en")
-    conv.send_seed()
+    conv, client = _conv(_FakeResponse(_FakeTextBlock("hello")), max_tokens=250)
+    conv.start_ritual("en")
 
     call_kwargs = client.messages.calls[0]
     assert call_kwargs["model"] == "claude-opus-5"
@@ -211,15 +339,13 @@ def test_call_uses_expected_request_shape():
     assert call_kwargs["output_config"] == {"effort": "low"}
     assert call_kwargs["cache_control"] == {"type": "ephemeral"}
     assert call_kwargs["system"] == SYSTEM_PROMPT
+    assert call_kwargs["tools"] == TOOLS
     assert "thinking" not in call_kwargs
-    assert call_kwargs["messages"] is conv.messages or call_kwargs["messages"] == conv.messages[:1]
 
 
 def test_reset_clears_messages():
-    client = _FakeClient([_FakeResponse("hi")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-    conv.start_session("something", "en")
-    conv.send_seed()
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("hi")))
+    conv.start_ritual("en")
     assert conv.turns > 0
 
     conv.reset()
@@ -229,76 +355,46 @@ def test_reset_clears_messages():
 
 
 def test_max_tokens_stop_reason_still_returns_truncated_text():
-    client = _FakeClient([_FakeResponse("truncated mid-sen", stop_reason="max_tokens")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=5)
-    conv.start_session(None, "en")
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock("truncated mid-sen"), stop_reason="max_tokens"))
 
-    text = conv.send_seed()
+    turn = conv.start_ritual("en")
 
-    assert text == "truncated mid-sen"
+    assert turn.beats == ["truncated mid-sen"]
     assert conv.turns == 2
 
 
-def test_refusal_stop_reason_falls_back():
-    client = _FakeClient([_FakeResponse("", stop_reason="refusal")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-    conv.start_session(None, "es")
+def test_refusal_stop_reason_falls_back_and_is_not_kept_in_history():
+    conv, _ = _conv(_FakeResponse(_FakeTextBlock(""), stop_reason="refusal"))
 
-    text = conv.send_seed()
+    turn = conv.start_ritual("es")
 
-    assert text == FALLBACK_LINES["es"]
-    # Refusal should not be appended as a real assistant turn.
+    assert turn.beats == [FALLBACK_LINES["es"]]
+    assert turn.tool_uses == []
+    # A refusal left in history would poison every later request this visit.
     assert conv.turns == 1
 
 
-def test_start_sorting_splits_multiline_reply_into_beats():
-    reply = "Plenty of courage, I see...\nDifficult... very difficult...\nGRYFFINDOR!"
-    client = _FakeClient([_FakeResponse(reply)])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+def test_empty_response_falls_back():
+    conv, _ = _conv(_FakeResponse())
 
-    beats = conv.start_sorting("a red scarf", "en")
+    turn = conv.start_ritual("en")
 
-    assert beats == ["Plenty of courage, I see...", "Difficult... very difficult...", "GRYFFINDOR!"]
-    assert "a red scarf" in conv.messages[0]["content"]
+    assert turn.beats == [FALLBACK_LINES["en"]]
 
 
-def test_start_sorting_drops_blank_lines():
-    reply = "Hmm...\n\nSLYTHERIN!\n"
-    client = _FakeClient([_FakeResponse(reply)])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+def test_api_error_degrades_to_fallback_line():
+    class _BoomMessages:
+        calls: list = []
 
-    beats = conv.start_sorting(None, "es")
+        def create(self, **kwargs):
+            raise RuntimeError("network gone")
 
-    assert beats == ["Hmm...", "SLYTHERIN!"]
+    class _BoomClient:
+        messages = _BoomMessages()
 
+    conv = ConversationManager(_BoomClient(), "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
 
-def test_start_sorting_falls_back_to_single_beat_on_single_line_reply():
-    client = _FakeClient([_FakeResponse("RAVENCLAW!")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
+    turn = conv.start_ritual("en")
 
-    beats = conv.start_sorting(None, "en")
-
-    assert beats == ["RAVENCLAW!"]
-
-
-def test_start_sorting_injects_a_flavor_hint():
-    client = _FakeClient([_FakeResponse("HUFFLEPUFF!")])
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-
-    conv.start_sorting(None, "en")
-
-    assert "private impression stirs in you" in conv.messages[0]["content"]
-
-
-def test_start_sorting_hints_vary_across_calls():
-    # Not guaranteed on any single pair, but with 14 hints, 20 draws should
-    # not all land on the same one.
-    client = _FakeClient([_FakeResponse("GRYFFINDOR!")] * 20)
-    conv = ConversationManager(client, "claude-opus-5", SYSTEM_PROMPT, max_tokens=100)
-
-    seeds = set()
-    for _ in range(20):
-        conv.start_sorting(None, "en")
-        seeds.add(conv.messages[0]["content"])
-
-    assert len(seeds) > 1
+    assert turn.beats == [FALLBACK_LINES["en"]]
+    assert turn.tool_uses == []

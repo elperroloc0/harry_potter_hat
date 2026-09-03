@@ -1,10 +1,15 @@
 """Text-only REPL for the Sorting Hat persona — no audio, no camera required.
 
-    python -m hat.chat [--no-vision] [--image path.jpg] [--lang es|en] [--debug]
+    python -m hat.chat [--image path.jpg] [--lang es|en] [--debug]
 
 Dev convenience for iterating on the persona/brain without the rest of the
-stack. The real pipeline gets `lang` from Whisper (STT), never from typed
-text — the heuristic here (`guess_lang`) exists only so this REPL is usable
+stack. It runs the same turn loop as the real orchestrator (hat.main), so
+tool calls behave the same way: take_photo describes --image if you gave
+one, /sit stands in for the PIR sensor firing when the visitor sits down,
+and end_session ends the visit.
+
+The real pipeline gets `lang` from Whisper (STT), never from typed text —
+the heuristic here (`guess_lang`) exists only so this REPL is usable
 bilingually without a --lang flag.
 """
 
@@ -12,15 +17,15 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 
 from hat.brain.client import HatBrain
+from hat.brain.persona import NO_SIGHT_RESULT
 from hat.audio.types import Transcript
 from hat.config import settings
 from hat.vision.camera import StaticImageStub
 from hat.vision.describer import OllamaDescriber
 
-FAREWELL_WORDS = {"adios", "adiós", "goodbye", "bye"}
+SIT_TOKEN = "/sit"
 
 # Small, deliberately simple stopword lists — a dev convenience, not a real
 # language detector. Accented characters and inverted punctuation are strong
@@ -70,70 +75,90 @@ def _print_usage(response) -> None:
     print(f"(debug: {', '.join(parts)})")
 
 
-def build_appearance(image_path: str) -> str | None:
+def build_appearance(image_path: str | None) -> str:
+    """take_photo's implementation for the REPL: describe --image if one was
+    given, else report that the sight didn't come — same contract as
+    hat.main.capture_appearance."""
+    if not image_path:
+        return NO_SIGHT_RESULT
     cam = StaticImageStub(image_path)
     jpeg = cam.capture_jpeg()
     if jpeg is None:
-        print(f"(vision: could not read image at {image_path}, continuing with no appearance)")
-        return None
-    describer = OllamaDescriber()
-    appearance = describer.describe(jpeg)
+        print(f"(vision: could not read image at {image_path})")
+        return NO_SIGHT_RESULT
+    appearance = OllamaDescriber().describe(jpeg)
     if appearance is None:
         print(
-            "(vision: Ollama unreachable or vision model unavailable — continuing with no "
-            "appearance. Install with `brew install ollama && ollama pull qwen3-vl:8b`.)"
+            "(vision: Ollama unreachable, vision model unavailable, or nobody in frame. "
+            "Install with `brew install ollama && ollama pull qwen2.5vl:7b`.)"
         )
+        return NO_SIGHT_RESULT
+    print(f"(vision: {appearance})")
     return appearance
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Talking Sorting Hat — text-only persona REPL")
-    parser.add_argument("--no-vision", action="store_true", help="skip vision entirely (default if no --image)")
-    parser.add_argument("--image", metavar="PATH", help="describe this image and seed it as appearance context")
+    parser.add_argument("--no-vision", action="store_true", help="(reserved; take_photo needs --image here)")
+    parser.add_argument("--image", metavar="PATH", help="the photo take_photo 'sees' when the hat looks at you")
     parser.add_argument("--lang", choices=["es", "en"], help="force a language instead of heuristically guessing typed input")
     parser.add_argument("--debug", action="store_true", help="print response.usage after each turn")
     args = parser.parse_args(argv)
 
-    appearance = None
-    if args.image:
-        appearance = build_appearance(args.image)
-    elif not args.no_vision:
-        # Neither flag given: default behavior is no vision (per spec — vision
-        # requires an explicit --image in this text-only REPL).
-        pass
-
+    image = None if args.no_vision else args.image
     lang = args.lang or settings.default_lang
-
     brain = HatBrain(settings)
-    for beat in brain.start_sorting(appearance, lang):
-        print(f"hat> {beat}")
-    if args.debug:
-        _print_usage(brain.conv.last_response)
 
-    while True:
-        try:
-            raw = input("you> ")
-        except EOFError:
-            print()
-            break
-        text = raw.strip()
-        if not text:
-            continue
-        if text.lower() in FAREWELL_WORDS:
-            farewell_lang = args.lang or guess_lang(text)
-            reply = brain.reply(Transcript(text=text, lang=farewell_lang))
-            print(f"hat> {reply}")
+    print(f"(type {SIT_TOKEN} to simulate sitting down in the chair; Ctrl-D to quit)")
+
+    turn = brain.start_ritual(lang)
+    seated_handled = False
+
+    try:
+        while True:
+            for beat in turn.beats:
+                print(f"hat> {beat}")
             if args.debug:
                 _print_usage(brain.conv.last_response)
-            break
 
-        turn_lang = args.lang or guess_lang(text)
-        reply = brain.reply(Transcript(text=text, lang=turn_lang))
-        print(f"hat> {reply}")
-        if args.debug:
-            _print_usage(brain.conv.last_response)
+            if turn.wants("end_session"):
+                print("(the hat returns to waiting for the next visitor)")
+                break
 
-    brain.end_session()
+            if turn.tool_uses:
+                results = []
+                for block in turn.tool_uses:
+                    content = (
+                        build_appearance(image)
+                        if block.name == "take_photo"
+                        else "That is not among your powers."
+                    )
+                    results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": content}
+                    )
+                turn = brain.submit_tool_results(results, lang)
+                continue
+
+            try:
+                raw = input("you> ").strip()
+            except EOFError:
+                print()
+                break
+            if not raw:
+                continue
+
+            if raw == SIT_TOKEN:
+                if seated_handled:
+                    print("(already seated)")
+                    continue
+                seated_handled = True
+                turn = brain.note_seated(lang)
+                continue
+
+            lang = args.lang or guess_lang(raw)
+            turn = brain.reply(Transcript(text=raw, lang=lang))
+    finally:
+        brain.end_session()
 
 
 if __name__ == "__main__":

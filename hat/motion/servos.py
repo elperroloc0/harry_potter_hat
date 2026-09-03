@@ -182,12 +182,13 @@ def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
     stop, it loses tracking and free-runs."""
     angle = max(0.0, min(180.0, angle))
 
-    # The electrical window is +/-90 degrees wide (min_duty..max_duty), but
-    # the horns only get travel_deg either side of horizontal before the
-    # pushrods hit the servo body, so scale into that sub-range first.
-    centre = 0.5 * (cal.min_duty + cal.max_duty)
-    half_span = 0.5 * (cal.max_duty - cal.min_duty) * (cal.travel_deg / 90.0)
-    duty = centre + ((angle - 90.0) / 90.0) * half_span
+    # Symmetric about measured horizontal, not about the middle of the band:
+    # the two are not the same point, so the reach is whichever side is
+    # nearer. Using the raw band instead is what threw the horn further one
+    # way than the other.
+    centre = cal.centre_duty
+    reach = min(centre - cal.min_duty, cal.max_duty - centre)
+    duty = centre + ((angle - 90.0) / 90.0) * reach * (cal.travel_deg / 90.0)
 
     # Backstop: whatever travel_deg says, never leave the tracking range.
     duty = max(cal.min_duty, min(cal.max_duty, duty))

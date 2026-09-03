@@ -22,7 +22,7 @@ class ServoCal:
     Two things make the nominal figures useless here. The horn's own zero
     lands wherever the splines allow when it is pressed on, so the usable
     band is not centred on the electrical 7.5%; measured, it runs 6.5% to
-    12.5%, whose midpoint -- 9.5% -- is what horizontal actually is. And
+    12.5%. And
     past the band the servo does not hit a stop, it loses tracking and turns
     in continuous full rotations, which is what made the hat unusable while
     this was set to a nominal 1.5%-14%: the resting angle sat at min_duty,
@@ -32,8 +32,17 @@ class ServoCal:
     does -- it still tracked there, while 14% free-ran, so there is a little
     more room above if the mouth ever needs a wider throw.
 
-    rest_deg is where the horn parks: 90, the middle of the band, so an idle
-    servo sits mid-travel rather than against an end.
+    centre_duty is horizontal, and it is measured, not the midpoint of the
+    band: 9.0% here against a midpoint of 9.5%. That gap is the whole reason
+    travel looked lopsided -- 2.5% of duty below horizontal against 3.5%
+    above, so sweeping the raw band threw the horn 40% further one way than
+    the other. Motion is therefore made symmetric about centre_duty and
+    limited by the narrower side, giving +/-2.5% (6.5% to 11.5%) and leaving
+    the top of the band unused. Re-measure with hat.tools.find_servo_range
+    after re-seating a horn; the spline teeth will land somewhere else.
+
+    rest_deg is where the horn parks: 90, i.e. centre_duty, so an idle servo
+    sits horizontal rather than against an end.
 
     """
 
@@ -42,6 +51,7 @@ class ServoCal:
     pca9685_freq_hz: int = 50
     min_duty: float = 0.065
     max_duty: float = 0.125
+    centre_duty: float = 0.09
     rest_deg: float = 90.0
     travel_deg: float = 90.0
     max_slew_deg_per_s: float = 600.0

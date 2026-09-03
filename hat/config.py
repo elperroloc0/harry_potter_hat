@@ -17,18 +17,32 @@ class ServoCal:
     eyebrows together through one linkage -- on the channels below. Nothing
     else in the codebase should need to change when these numbers do.
 
-    min_duty/max_duty is the bench-confirmed safe PCA9685 duty-cycle range
-    for an MG90S: outside roughly 0.2%-20% the servo doesn't hit a
-    mechanical stop, it loses tracking and spins continuously, so 1.5%-14%
-    (covering the full 0-180 degree sweep with margin on both sides) is a
-    hard limit, not a starting guess.
+    min_duty/max_duty is the +/-90-degree window either side of horizontal,
+    and it is a hard mechanical limit: 5% is -90 degrees, 7.5% is horizontal,
+    10% is +90 degrees, which is the standard 1.0/1.5/2.0 ms pulse triple at
+    50 Hz.
+
+    These were 1.5%-14% before, described as "bench-confirmed safe". Live on
+    the rig that turned out to be false and is what made the servos useless:
+    at 1.5% and at 14% this servo loses tracking and spins in continuous full
+    rotations, first one way then the other, while 5%, 7.5% and 10% each hold
+    position solidly. Since the resting angle was 0 -- i.e. min_duty -- the
+    horn was spinning even with the hat silent, and speech swept it between
+    two out-of-range endpoints ten times a second. Do not widen this back out
+    without re-testing on the actual servo: past these limits it does not hit
+    a stop, it free-runs.
+
+    rest_deg is where the horn parks: 90, horizontal, the centre of the
+    window, so an idle servo sits in the middle of its travel rather than
+    against an end.
     """
 
     mouth_channel: int = 15
     brow_channel: int = 11
     pca9685_freq_hz: int = 50
-    min_duty: float = 0.015
-    max_duty: float = 0.14
+    min_duty: float = 0.05
+    max_duty: float = 0.10
+    rest_deg: float = 90.0
     max_slew_deg_per_s: float = 600.0
 
 

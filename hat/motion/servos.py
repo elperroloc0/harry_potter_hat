@@ -110,10 +110,13 @@ class PCA9685Servos(ServoController):
         self.pca = PCA9685(i2c)
         self.pca.frequency = cal.pca9685_freq_hz
 
-        self._mouth_angle = 0.0
-        self._brow_angle = 0.0
-        self._mouth_target = 0.0
-        self._brow_target = 0.0
+        # Park horizontal (mid-travel), not at an endpoint: 0 degrees used
+        # to mean min_duty, which on this servo is outside its tracking
+        # range, so an idle hat sat there spinning.
+        self._mouth_angle = cal.rest_deg
+        self._brow_angle = cal.rest_deg
+        self._mouth_target = cal.rest_deg
+        self._brow_target = cal.rest_deg
         self._lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -172,11 +175,11 @@ def _clamp01(v: float) -> float:
 
 
 def _angle_to_duty(angle: float, cal: "ServoCal") -> int:
-    """Map a 0-180 degree servo angle to a 16-bit PCA9685 duty cycle, using
-    the bench-calibrated safe range in `cal`. Outside that range the servo
-    doesn't hit a mechanical stop -- it loses tracking and spins
-    continuously -- so clamping to [0, 180] here is a hard limit, not a
-    suggestion."""
+    """Map a 0-180 degree servo angle onto the +/-90-degree window around
+    horizontal: 0 -> min_duty (-90), 90 -> horizontal, 180 -> max_duty (+90).
+    Clamping to [0, 180] is a hard limit, not a suggestion -- past the window
+    the servo does not hit a mechanical stop, it loses tracking and free-runs
+    (see ServoCal)."""
     angle = max(0.0, min(180.0, angle))
     duty = cal.min_duty + (angle / 180.0) * (cal.max_duty - cal.min_duty)
     return int(duty * 65535)
